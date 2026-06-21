@@ -1,0 +1,70 @@
+:root {
+  color-scheme: light;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  background: #f4f6f8;
+  color: #172033;
+}
+
+.mantine-AppShell-header,
+.mantine-AppShell-navbar {
+  background: #ffffff;
+  border-color: #dfe5ec;
+}
+
+.brandMark {
+  align-items: center;
+  background: #eaf3ff;
+  border: 1px solid #cfe3ff;
+  border-radius: 8px;
+  display: flex;
+  height: 42px;
+  justify-content: center;
+  width: 42px;
+}
+
+.page {
+  margin: 0 auto;
+  max-width: 1480px;
+}
+
+.navItem {
+  border-radius: 8px;
+}
+
+.sheetShell {
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.spreadsheetHost {
+  min-height: 520px;
+  min-width: 1100px;
+  padding: 12px;
+}
+
+.masterPanel {
+  background: #ffffff;
+  min-height: 100%;
+}
+
+.jexcel,
+.jexcel_container {
+  font-size: 13px;
+}
+
+.jexcel > thead > tr > td {
+  background: #eef4f8;
+  color: #24364b;
+  font-weight: 700;
+}
+
+.jexcel > tbody > tr > td {
+  color: #172033;
+}
