@@ -48,6 +48,24 @@ create table concrete_designs (
   updated_at timestamptz not null default now()
 );
 
+create table project_sites (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  address text,
+  remarks text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table sales_people (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  phone text,
+  remarks text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table customer_concrete_prices (
   id uuid primary key default gen_random_uuid(),
   customer_id uuid not null references customers(id) on delete cascade,
@@ -61,6 +79,7 @@ create table customer_concrete_prices (
 
 create table sales_records (
   id uuid primary key default gen_random_uuid(),
+  sale_or_number bigint not null unique,
   customer_id uuid references customers(id) on delete restrict,
   manual_customer_name text,
   concrete_design_id uuid not null references concrete_designs(id) on delete restrict,
@@ -90,6 +109,41 @@ create table sales_payments (
   updated_at timestamptz not null default now()
 );
 
+create table graba_records (
+  id uuid primary key default gen_random_uuid(),
+  graba_dr_number bigint not null unique,
+  supplier_id uuid references suppliers(id) on delete restrict,
+  manual_supplier_name text,
+  graba_date date not null,
+  items text not null,
+  truck text,
+  length_value numeric(12,2) not null default 0 check (length_value >= 0),
+  width_value numeric(12,2) not null default 0 check (width_value >= 0),
+  height_value numeric(12,2) not null default 0 check (height_value >= 0),
+  cubic_volume numeric(12,2) generated always as (length_value * width_value * height_value) stored,
+  unit_price numeric(12,2) not null default 0 check (unit_price >= 0),
+  total_amount numeric(12,2) generated always as ((length_value * width_value * height_value) * unit_price) stored,
+  payment_status payment_status not null default 'unpaid',
+  remarks text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint graba_has_supplier check (
+    supplier_id is not null or nullif(trim(manual_supplier_name), '') is not null
+  )
+);
+
+create table graba_payments (
+  id uuid primary key default gen_random_uuid(),
+  graba_record_id uuid not null references graba_records(id) on delete cascade,
+  payment_date date not null,
+  amount numeric(12,2) not null check (amount > 0),
+  payment_method text not null,
+  reference_number text,
+  remarks text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table post_dated_checks (
   id uuid primary key default gen_random_uuid(),
   sales_record_id uuid references sales_records(id) on delete cascade,
@@ -110,6 +164,7 @@ create table post_dated_checks (
 create view sales_billing_summary as
 select
   sr.id,
+  sr.sale_or_number,
   sr.sale_date,
   sr.customer_id,
   coalesce(c.name, sr.manual_customer_name) as customer_name,
@@ -127,6 +182,30 @@ left join customers c on c.id = sr.customer_id
 join concrete_designs cd on cd.id = sr.concrete_design_id
 left join sales_payments sp on sp.sales_record_id = sr.id
 group by sr.id, c.name, cd.code;
+
+create view graba_summary as
+select
+  gr.id,
+  gr.graba_dr_number,
+  gr.graba_date,
+  gr.supplier_id,
+  coalesce(s.name, gr.manual_supplier_name) as supplier_name,
+  gr.items,
+  gr.truck,
+  gr.length_value,
+  gr.width_value,
+  gr.height_value,
+  gr.cubic_volume,
+  gr.unit_price,
+  gr.total_amount,
+  coalesce(sum(gp.amount), 0) as paid_amount,
+  gr.total_amount - coalesce(sum(gp.amount), 0) as balance_amount,
+  gr.payment_status,
+  gr.remarks
+from graba_records gr
+left join suppliers s on s.id = gr.supplier_id
+left join graba_payments gp on gp.graba_record_id = gr.id
+group by gr.id, s.name;
 
 create table drivers (
   id uuid primary key default gen_random_uuid(),
@@ -302,9 +381,13 @@ create table supplier_payments (
 create trigger customers_set_updated_at before update on customers for each row execute function set_updated_at();
 create trigger suppliers_set_updated_at before update on suppliers for each row execute function set_updated_at();
 create trigger concrete_designs_set_updated_at before update on concrete_designs for each row execute function set_updated_at();
+create trigger project_sites_set_updated_at before update on project_sites for each row execute function set_updated_at();
+create trigger sales_people_set_updated_at before update on sales_people for each row execute function set_updated_at();
 create trigger customer_concrete_prices_set_updated_at before update on customer_concrete_prices for each row execute function set_updated_at();
 create trigger sales_records_set_updated_at before update on sales_records for each row execute function set_updated_at();
 create trigger sales_payments_set_updated_at before update on sales_payments for each row execute function set_updated_at();
+create trigger graba_records_set_updated_at before update on graba_records for each row execute function set_updated_at();
+create trigger graba_payments_set_updated_at before update on graba_payments for each row execute function set_updated_at();
 create trigger post_dated_checks_set_updated_at before update on post_dated_checks for each row execute function set_updated_at();
 create trigger drivers_set_updated_at before update on drivers for each row execute function set_updated_at();
 create trigger trucks_set_updated_at before update on trucks for each row execute function set_updated_at();
@@ -321,7 +404,12 @@ create trigger purchase_order_items_set_updated_at before update on purchase_ord
 create trigger supplier_payments_set_updated_at before update on supplier_payments for each row execute function set_updated_at();
 
 create index idx_sales_records_customer_id on sales_records(customer_id);
+create index idx_sales_records_sale_or_number on sales_records(sale_or_number);
 create index idx_sales_records_sale_date on sales_records(sale_date);
+create index idx_graba_records_supplier_id on graba_records(supplier_id);
+create index idx_graba_records_dr_number on graba_records(graba_dr_number);
+create index idx_graba_records_date on graba_records(graba_date);
+create index idx_graba_payments_graba_record_id on graba_payments(graba_record_id);
 create index idx_customer_concrete_prices_customer_id on customer_concrete_prices(customer_id);
 create index idx_customer_concrete_prices_design_id on customer_concrete_prices(concrete_design_id);
 create index idx_sales_payments_sales_record_id on sales_payments(sales_record_id);
@@ -337,9 +425,13 @@ create index idx_purchase_orders_supplier_id on purchase_orders(supplier_id);
 alter table customers enable row level security;
 alter table suppliers enable row level security;
 alter table concrete_designs enable row level security;
+alter table project_sites enable row level security;
+alter table sales_people enable row level security;
 alter table customer_concrete_prices enable row level security;
 alter table sales_records enable row level security;
 alter table sales_payments enable row level security;
+alter table graba_records enable row level security;
+alter table graba_payments enable row level security;
 alter table post_dated_checks enable row level security;
 alter table drivers enable row level security;
 alter table trucks enable row level security;
@@ -358,9 +450,13 @@ alter table supplier_payments enable row level security;
 create policy "authenticated manage customers" on customers for all to anon, authenticated using (true) with check (true);
 create policy "authenticated manage suppliers" on suppliers for all to anon, authenticated using (true) with check (true);
 create policy "authenticated manage concrete designs" on concrete_designs for all to anon, authenticated using (true) with check (true);
+create policy "authenticated manage project sites" on project_sites for all to anon, authenticated using (true) with check (true);
+create policy "authenticated manage sales people" on sales_people for all to anon, authenticated using (true) with check (true);
 create policy "authenticated manage customer concrete prices" on customer_concrete_prices for all to anon, authenticated using (true) with check (true);
 create policy "authenticated manage sales records" on sales_records for all to anon, authenticated using (true) with check (true);
 create policy "authenticated manage sales payments" on sales_payments for all to anon, authenticated using (true) with check (true);
+create policy "authenticated manage graba records" on graba_records for all to anon, authenticated using (true) with check (true);
+create policy "authenticated manage graba payments" on graba_payments for all to anon, authenticated using (true) with check (true);
 create policy "authenticated manage post dated checks" on post_dated_checks for all to anon, authenticated using (true) with check (true);
 create policy "authenticated manage drivers" on drivers for all to anon, authenticated using (true) with check (true);
 create policy "authenticated manage trucks" on trucks for all to anon, authenticated using (true) with check (true);

@@ -26,15 +26,6 @@ const masters = [
     ],
   },
   {
-    title: 'Concrete Designs',
-    table: 'concrete_designs',
-    fields: [
-      { key: 'code', label: 'Design Code', required: true },
-      { key: 'description', label: 'Description' },
-      { key: 'strength_psi', label: 'Strength PSI', numeric: true },
-    ],
-  },
-  {
     title: 'Trucks',
     table: 'trucks',
     fields: [

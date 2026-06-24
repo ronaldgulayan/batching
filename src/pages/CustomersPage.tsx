@@ -1,54 +1,63 @@
-import { useEffect, useState } from 'react';
-import {
-  Alert,
-  Button,
-  Grid,
-  Group,
-  Paper,
-  Stack,
-  Table,
-  Text,
-  TextInput,
-  Title,
-} from '@mantine/core';
-import { AlertCircle, RefreshCw, Save, UsersRound } from 'lucide-react';
-import { isSupabaseConfigured, supabase } from '../lib/supabaseClient';
+import { useEffect, useState } from "react";
+import { Alert, Button, Stack } from "@mantine/core";
+import { AlertCircle, RefreshCw } from "lucide-react";
+import { CustomExcelTable, type ExcelColumn } from "../components/CustomExcelTable";
+import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 
-type Customer = {
+type ClientRow = {
   id: string;
-  name: string;
-  contact_person: string | null;
-  phone: string | null;
-  billing_address: string | null;
-  site_address: string | null;
+  client_name: string;
+  sale_or_number: number;
+  sale_date: string;
+  design: string;
+  cubic_volume: number;
+  total_amount: number;
+  paid_amount: number;
+  balance_amount: number;
+  payment_status: string;
 };
 
-type CustomerForm = Omit<Customer, 'id'>;
-
-const emptyForm: CustomerForm = {
-  name: '',
-  contact_person: '',
-  phone: '',
-  billing_address: '',
-  site_address: '',
+type SummaryRecord = {
+  id: string;
+  sale_or_number: number | null;
+  sale_date: string;
+  customer_name: string | null;
+  concrete_design: string | null;
+  cubic_volume: number;
+  total_amount: number;
+  paid_amount: number;
+  balance_amount: number;
+  payment_status: string;
 };
+
+const columns: ExcelColumn<ClientRow>[] = [
+  { key: "client_name", label: "Client", width: 220, sortable: true },
+  { key: "sale_or_number", label: "OR No", type: "number", width: 100, sortable: true },
+  { key: "sale_date", label: "Date", type: "date", width: 120, sortable: true },
+  { key: "design", label: "Design", width: 140, sortable: true },
+  { key: "cubic_volume", label: "Cubic", type: "number", width: 110, sortable: true },
+  { key: "total_amount", label: "Total", type: "number", width: 130, sortable: true },
+  { key: "paid_amount", label: "Paid", type: "number", width: 130, sortable: true },
+  { key: "balance_amount", label: "Unpaid", type: "number", width: 130, sortable: true },
+  { key: "payment_status", label: "Status", width: 120, sortable: true },
+];
 
 export function CustomersPage() {
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [form, setForm] = useState<CustomerForm>(emptyForm);
+  const [rows, setRows] = useState<ClientRow[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
+  const [error, setError] = useState("");
 
-  async function loadCustomers() {
+  async function loadClients() {
     if (!isSupabaseConfigured) return;
     setLoading(true);
-    setError('');
+    setError("");
 
     const { data, error: loadError } = await supabase
-      .from('customers')
-      .select('id,name,contact_person,phone,billing_address,site_address')
-      .order('name');
+      .from("sales_billing_summary")
+      .select(
+        "id,sale_or_number,sale_date,customer_name,concrete_design,cubic_volume,total_amount,paid_amount,balance_amount,payment_status",
+      )
+      .order("sale_date", { ascending: false });
 
     setLoading(false);
 
@@ -57,137 +66,63 @@ export function CustomersPage() {
       return;
     }
 
-    setCustomers(data ?? []);
-  }
-
-  async function saveCustomer() {
-    if (!form.name.trim()) {
-      setError('Customer name is required.');
-      return;
-    }
-
-    setLoading(true);
-    setError('');
-    setMessage('');
-
-    const record = Object.fromEntries(
-      Object.entries(form).map(([key, value]) => [key, String(value ?? '').trim() || null]),
+    setRows(
+      ((data ?? []) as unknown as SummaryRecord[]).map((record) => ({
+        id: record.id,
+        client_name: record.customer_name ?? "",
+        sale_or_number: Number(record.sale_or_number || 0),
+        sale_date: record.sale_date,
+        design: record.concrete_design ?? "",
+        cubic_volume: Number(record.cubic_volume || 0),
+        total_amount: Number(record.total_amount || 0),
+        paid_amount: Number(record.paid_amount || 0),
+        balance_amount: Number(record.balance_amount || 0),
+        payment_status: record.payment_status,
+      })),
     );
-
-    const { error: saveError } = await supabase.from('customers').insert(record);
-    setLoading(false);
-
-    if (saveError) {
-      setError(saveError.message);
-      return;
-    }
-
-    setForm(emptyForm);
-    setMessage('Customer saved.');
-    await loadCustomers();
   }
 
   useEffect(() => {
-    void loadCustomers();
+    void loadClients();
   }, []);
 
   return (
-    <Stack gap="md">
-      <Group justify="space-between" align="flex-start">
-        <div>
-          <Group gap="xs">
-            <UsersRound size={22} />
-            <Title order={2}>Customers</Title>
-          </Group>
-          <Text c="dimmed" size="sm" mt={4}>
-            Customer records used by Sales and customer-specific pricing.
-          </Text>
-        </div>
-        <Button leftSection={<RefreshCw size={16} />} variant="light" onClick={loadCustomers} loading={loading}>
+    <Stack gap='md'>
+      <div className='formActions'>
+        <Button
+          leftSection={<RefreshCw size={16} />}
+          variant='light'
+          onClick={loadClients}
+          loading={loading}
+        >
           Refresh
         </Button>
-      </Group>
+      </div>
 
       {!isSupabaseConfigured && (
-        <Alert icon={<AlertCircle size={16} />} color="yellow" title="Supabase is not configured">
+        <Alert
+          icon={<AlertCircle size={16} />}
+          color='yellow'
+          title='Supabase is not configured'
+        >
           Supabase credentials are missing from .env.
         </Alert>
       )}
 
       {error && (
-        <Alert icon={<AlertCircle size={16} />} color="red" title="Database error">
+        <Alert
+          icon={<AlertCircle size={16} />}
+          color='red'
+          title='Database error'
+        >
           {error}
         </Alert>
       )}
 
-      {message && <Alert color="green">{message}</Alert>}
-
-      <Grid>
-        <Grid.Col span={{ base: 12, md: 4 }}>
-          <Paper withBorder radius="sm" p="md" className="masterPanel">
-            <Stack>
-              <Title order={3}>New Customer</Title>
-              <TextInput
-                label="Customer Name"
-                required
-                value={form.name}
-                onChange={(event) => setForm({ ...form, name: event.currentTarget.value })}
-              />
-              <TextInput
-                label="Contact Person"
-                value={form.contact_person ?? ''}
-                onChange={(event) => setForm({ ...form, contact_person: event.currentTarget.value })}
-              />
-              <TextInput
-                label="Phone"
-                value={form.phone ?? ''}
-                onChange={(event) => setForm({ ...form, phone: event.currentTarget.value })}
-              />
-              <TextInput
-                label="Billing Address"
-                value={form.billing_address ?? ''}
-                onChange={(event) => setForm({ ...form, billing_address: event.currentTarget.value })}
-              />
-              <TextInput
-                label="Site Address"
-                value={form.site_address ?? ''}
-                onChange={(event) => setForm({ ...form, site_address: event.currentTarget.value })}
-              />
-              <Button leftSection={<Save size={16} />} onClick={saveCustomer} loading={loading}>
-                Save Customer
-              </Button>
-            </Stack>
-          </Paper>
-        </Grid.Col>
-
-        <Grid.Col span={{ base: 12, md: 8 }}>
-          <Paper withBorder radius="sm" p="md" className="masterPanel">
-            <Title order={3} mb="sm">
-              Customer List
-            </Title>
-            <Table striped highlightOnHover>
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>Name</Table.Th>
-                  <Table.Th>Contact</Table.Th>
-                  <Table.Th>Phone</Table.Th>
-                  <Table.Th>Site Address</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {customers.map((customer) => (
-                  <Table.Tr key={customer.id}>
-                    <Table.Td>{customer.name}</Table.Td>
-                    <Table.Td>{customer.contact_person}</Table.Td>
-                    <Table.Td>{customer.phone}</Table.Td>
-                    <Table.Td>{customer.site_address}</Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          </Paper>
-        </Grid.Col>
-      </Grid>
+      <CustomExcelTable
+        columns={columns}
+        data={rows}
+      />
     </Stack>
   );
 }

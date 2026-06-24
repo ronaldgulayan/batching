@@ -1,0 +1,506 @@
+.excel-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  font-family: var(--mantine-font-family, "Outfit", "Inter", sans-serif);
+}
+
+/* Scroll Area Container */
+.excel-scroll-area {
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+  background-color: var(--app-surface);
+}
+
+/* Excel Wrapper Container */
+.excel-grid-container {
+  overflow: visible;
+  position: relative;
+  outline: none;
+  width: max-content;
+  min-width: 100%;
+  padding-bottom: 12px;
+}
+
+/* Excel Grid Table */
+.excel-grid-table {
+  border-collapse: collapse;
+  width: max-content;
+  min-width: 100%;
+  table-layout: fixed;
+  user-select: none;
+}
+
+/* Header and Cell structure */
+.excel-grid-table th,
+.excel-grid-table td {
+  border: 1px solid var(--app-border);
+  padding: 0;
+  height: 34px;
+  position: relative;
+  box-sizing: border-box;
+}
+
+/* Header row */
+.excel-header-row {
+  background-color: var(--app-surface-subtle);
+}
+
+.excel-grid-table th {
+  font-family: "Outfit", sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--app-text);
+  text-align: left;
+  padding: 0 28px 0 10px;
+  background-color: var(--app-surface-subtle);
+  border-bottom: 2px solid var(--app-border);
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  cursor: pointer;
+}
+
+/* Top-left corner cell of table header */
+.excel-grid-table thead tr th:first-child {
+  position: sticky !important;
+  top: 0;
+  left: 0;
+  z-index: 30;
+  background-color: var(--app-surface-subtle);
+  border-right: 2px solid var(--app-border) !important;
+}
+
+/* Header Filter dropdown indicator icon */
+.excel-header-filter-icon {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  color: var(--app-muted);
+  pointer-events: none;
+}
+
+/* Left pinned Index Row Selector column */
+.excel-row-header {
+  width: 50px;
+  background-color: var(--app-surface-subtle);
+  color: var(--app-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+  border-right: 2px solid var(--app-border) !important;
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+  position: sticky !important;
+  left: 0;
+  z-index: 15;
+}
+
+/* Selected Header Highlighting (Excel style) */
+.excel-row-header.header-selected,
+.excel-grid-table th.header-selected {
+  background-color: rgba(26, 115, 232, 0.08) !important;
+  color: #1a73e8 !important;
+  border-right-color: #1a73e8 !important;
+  border-bottom-color: #1a73e8 !important;
+}
+
+/* Flat Grid Cell Display */
+.excel-cell-display {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--app-text);
+  box-sizing: border-box;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Dropdown arrow inside select columns */
+.excel-cell-dropdown-arrow {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 10px;
+  color: var(--app-muted);
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+/* cell alignments */
+.cell-left {
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.cell-right {
+  justify-content: flex-end;
+  text-align: right;
+  font-family: "Inter", monospace !important;
+}
+
+/* Active Cell blue selection highlight */
+.excel-grid-table td.active-cell {
+  outline: 2px solid #1a73e8 !important;
+  outline-offset: -2px;
+  z-index: 5;
+  background-color: rgba(26, 115, 232, 0.03) !important;
+}
+
+/* Real DOM Excel fill handle square dot */
+.excel-fill-handle {
+  position: absolute;
+  bottom: -4px;
+  right: -4px;
+  width: 6px;
+  height: 6px;
+  background-color: #1a73e8;
+  border: 1px solid white;
+  z-index: 12;
+  cursor: crosshair;
+}
+
+/* Fill Preview Cell styles */
+.excel-grid-table td.fill-preview-cell {
+  background-color: rgba(26, 115, 232, 0.04) !important;
+}
+
+.excel-grid-table td.fill-preview-cell::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  border-left: 1.5px dashed #1a73e8;
+  border-right: 1.5px dashed #1a73e8;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.excel-grid-table td.fill-boundary-top::before {
+  border-top: 1.5px dashed #1a73e8;
+}
+
+.excel-grid-table td.fill-boundary-bottom::before {
+  border-bottom: 1.5px dashed #1a73e8;
+}
+
+/* Selected Shading Highlight for Rows/Columns (Excel style) */
+.excel-grid-table td.selected-cell {
+  background-color: rgba(26, 115, 232, 0.08) !important;
+}
+
+/* Borderless inputs during editing */
+.excel-cell-input {
+  width: 100%;
+  height: 100%;
+  border: none;
+  outline: none;
+  background: var(--app-surface) !important;
+  color: var(--app-text) !important;
+  padding: 0 10px;
+  font-size: 13px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.excel-cell-input.cell-right {
+  text-align: right;
+}
+
+/* Borderless Select component during editing */
+.excel-cell-select {
+  width: 100%;
+  height: 100%;
+  border: none;
+  outline: none;
+  background: var(--app-surface) !important;
+  color: var(--app-text) !important;
+  padding: 0 6px;
+  font-size: 13px;
+  font-family: inherit;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+
+/* Hover cell effect */
+.excel-grid-table tr:hover td:not(.excel-row-header):not(.selected-cell) {
+  background-color: rgba(49, 151, 149, 0.02);
+}
+
+/* Hide number input spinners/controls globally and specifically in the table */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* Pagination Bar Styling */
+.excel-pagination-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 16px;
+  border-top: 1px solid var(--app-border);
+  background-color: var(--app-surface-subtle);
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.excel-pagination-info {
+  color: var(--app-muted);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.excel-pagination-limit {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+
+.excel-pagination-limit-select {
+  background-color: var(--app-surface);
+  border: 1px solid var(--app-border);
+  color: var(--app-text);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  font-family: inherit;
+}
+
+.excel-pagination-limit-select:focus {
+  border-color: #1a73e8;
+}
+
+.excel-pagination-buttons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.excel-pagination-btn {
+  background-color: var(--app-surface);
+  border: 1px solid var(--app-border);
+  color: var(--app-text);
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.15s ease;
+  user-select: none;
+  min-width: 32px;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.excel-pagination-btn:hover:not(:disabled) {
+  border-color: #1a73e8;
+  color: #1a73e8;
+  background-color: rgba(26, 115, 232, 0.04);
+}
+
+.excel-pagination-btn.active {
+  background-color: #1a73e8 !important;
+  color: #ffffff !important;
+  border-color: #1a73e8 !important;
+}
+
+.excel-pagination-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.excel-pagination-ellipsis {
+  color: var(--app-muted);
+  padding: 0 4px;
+  user-select: none;
+}
+
+/* Custom Context Menu */
+.excel-context-menu {
+  position: fixed;
+  background-color: var(--app-surface);
+  border: 1px solid var(--app-border);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  border-radius: 6px;
+  padding: 4px 0;
+  min-width: 170px;
+  z-index: 9999;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--app-text);
+  animation: excel-fade-in 0.1s ease-out;
+}
+
+@keyframes excel-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.excel-context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+  user-select: none;
+  font-weight: 500;
+}
+
+.excel-context-menu-item:hover {
+  background-color: var(--app-surface-subtle);
+  color: #1a73e8;
+}
+
+.excel-context-menu-item.delete:hover {
+  background-color: rgba(229, 62, 62, 0.08);
+  color: #e53e3e;
+}
+
+.excel-context-menu-icon {
+  font-size: 14px;
+  width: 14px;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  color: var(--app-muted);
+}
+
+.excel-context-menu-item:hover .excel-context-menu-icon {
+  color: inherit;
+}
+
+.excel-context-menu-divider {
+  height: 1px;
+  background-color: var(--app-border);
+  margin: 4px 0;
+}
+
+/* Column and Row Resizing Handle Styles */
+.resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 10;
+  background-color: transparent;
+  transition: background-color 0.1s ease;
+}
+
+.resize-handle:hover,
+.resize-handle:active {
+  background-color: #1a73e8;
+}
+
+.row-resize-handle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 6px;
+  cursor: row-resize;
+  z-index: 10;
+  background-color: transparent;
+  transition: background-color 0.1s ease;
+}
+
+.row-resize-handle:hover,
+.row-resize-handle:active {
+  background-color: #1a73e8;
+}
+
+/* Sort Icon Styling */
+.excel-header-sort-icon {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  transition:
+    background-color 0.1s ease,
+    color 0.1s ease;
+  z-index: 9;
+  cursor: pointer;
+}
+
+.excel-header-sort-icon:hover {
+  background-color: rgba(26, 115, 232, 0.08);
+  color: #1a73e8;
+}
+
+.excel-action-cell {
+  text-align: center;
+  vertical-align: middle;
+}
+
+/* Excel Status Bar */
+.excel-status-bar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 6px 16px;
+  background-color: var(--app-surface-subtle);
+  border-top: 1px solid var(--app-border);
+  font-size: 12px;
+  font-family: var(--mantine-font-family, "Outfit", "Inter", sans-serif);
+  color: var(--app-text);
+  font-weight: 500;
+  user-select: none;
+}
+
+.excel-status-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.excel-status-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.excel-status-divider {
+  color: var(--app-border);
+  user-select: none;
+}

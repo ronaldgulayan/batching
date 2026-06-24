@@ -8,10 +8,13 @@ export type Option = {
 export type ModuleKey =
   | 'customers'
   | 'sales'
-  | 'pricing'
-  | 'dispatch'
-  | 'fuel'
+  | 'payments'
+  | 'graba'
   | 'maintenance'
+  | 'maintenance-designs'
+  | 'maintenance-sites'
+  | 'maintenance-sales'
+  | 'maintenance-suppliers'
   | 'expenses'
   | 'masters';
 

@@ -1,37 +1,56 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import jspreadsheet from 'jspreadsheet-ce';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Badge,
   Button,
-  Group,
+  NumberInput,
   Paper,
-  ScrollArea,
+  SimpleGrid,
   Stack,
-  Text,
-  Title,
+  TextInput,
 } from '@mantine/core';
 import { AlertCircle, RefreshCw, Save } from 'lucide-react';
 import type { SpreadsheetModuleConfig } from '../data/moduleConfig';
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient';
+import { CustomExcelTable, type ExcelColumn } from './CustomExcelTable';
+import { SuggestionTextInput } from './SuggestionTextInput';
 
 type Props = {
   config: SpreadsheetModuleConfig;
 };
 
-export function SpreadsheetEditor({ config }: Props) {
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const sheetRef = useRef<any>(null);
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<string>('');
-  const [error, setError] = useState<string>('');
+type DisplayRow = {
+  id: string | number;
+  [key: string]: string | number | null | undefined;
+};
 
-  const emptyRows = useMemo(
-    () => Array.from({ length: 12 }, () => Array.from({ length: config.columns.length }, () => '')),
-    [config.columns.length],
+export function SpreadsheetEditor({ config }: Props) {
+  const inputColumns = useMemo(() => config.columns.filter((column) => column.title !== 'ID'), [config.columns]);
+  const [rows, setRows] = useState<DisplayRow[]>([]);
+  const [form, setForm] = useState<Record<string, string | number>>({});
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  const tableColumns = useMemo<ExcelColumn<DisplayRow>[]>(
+    () =>
+      config.columns.map((column, index) => ({
+        key: `c${index}`,
+        label: column.title,
+        type: column.type === 'numeric' ? 'number' : column.type === 'calendar' ? 'date' : 'text',
+        width: column.width,
+        sortable: true,
+      })),
+    [config.columns],
   );
 
-  const worksheet = () => (Array.isArray(sheetRef.current) ? sheetRef.current[0] : sheetRef.current);
+  function recordToDisplayRow(record: Record<string, unknown>) {
+    const values = config.toRow(record);
+    return {
+      id: String(values[0] ?? record.id ?? crypto.randomUUID()),
+      ...Object.fromEntries(values.map((value, index) => [`c${index}`, value as string | number | null | undefined])),
+    };
+  }
 
   async function loadRows() {
     if (!isSupabaseConfigured) return;
@@ -43,7 +62,7 @@ export function SpreadsheetEditor({ config }: Props) {
       .from(config.table)
       .select('*')
       .order(config.dateColumn, { ascending: false, nullsFirst: false })
-      .limit(200);
+      .limit(300);
 
     setLoading(false);
 
@@ -52,15 +71,21 @@ export function SpreadsheetEditor({ config }: Props) {
       return;
     }
 
-    const rows = data?.length ? data.map(config.toRow) : emptyRows;
-    worksheet()?.setData(rows);
+    setRows((data ?? []).map((record) => recordToDisplayRow(record as Record<string, unknown>)));
     setMessage(`Loaded ${data?.length ?? 0} records.`);
   }
 
-  async function saveRows() {
-    if (!sheetRef.current) return;
+  async function saveRecord() {
     if (!isSupabaseConfigured) {
-      setError('Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env first.');
+      setError('Supabase credentials are missing from .env.');
+      return;
+    }
+
+    const row = config.columns.map((column, index) => (index === 0 ? '' : (form[column.title] ?? '')));
+    const record = config.toRecord(row);
+
+    if (!record) {
+      setError('Please complete the required fields for this module.');
       return;
     }
 
@@ -68,21 +93,7 @@ export function SpreadsheetEditor({ config }: Props) {
     setError('');
     setMessage('');
 
-    const records = worksheet()
-      .getData()
-      .map(config.toRecord)
-      .filter(Boolean);
-
-    if (!records.length) {
-      setLoading(false);
-      setMessage('No complete rows to save yet.');
-      return;
-    }
-
-    const { error: saveError } = await supabase.from(config.table).upsert(records, {
-      onConflict: 'id',
-    });
-
+    const { error: saveError } = await supabase.from(config.table).insert(record);
     setLoading(false);
 
     if (saveError) {
@@ -90,57 +101,74 @@ export function SpreadsheetEditor({ config }: Props) {
       return;
     }
 
-    setMessage(`Saved ${records.length} records.`);
+    setForm({});
+    setMessage('Record saved.');
     await loadRows();
   }
 
   useEffect(() => {
-    if (!hostRef.current) return;
-
-    hostRef.current.innerHTML = '';
-    sheetRef.current = jspreadsheet(hostRef.current, {
-      worksheets: [
-        {
-          data: emptyRows,
-          minDimensions: [config.columns.length, 12],
-          columns: config.columns,
-        },
-      ],
-    });
-
     void loadRows();
-
-    return () => {
-      if (hostRef.current) hostRef.current.innerHTML = '';
-      sheetRef.current = null;
-    };
-  }, [config, emptyRows]);
+  }, [config]);
 
   return (
     <Stack gap="md">
-      <Group justify="space-between" align="flex-start">
-        <div>
-          <Group gap="xs">
-            <config.icon size={22} />
-            <Title order={2}>{config.title}</Title>
-          </Group>
-          <Text c="dimmed" size="sm" mt={4}>
-            Spreadsheet entry for {config.table.replace(/_/g, ' ')}.
-          </Text>
-        </div>
-        <Group>
-          <Button leftSection={<RefreshCw size={16} />} variant="light" onClick={loadRows} loading={loading}>
-            Refresh
-          </Button>
-          <Button leftSection={<Save size={16} />} onClick={saveRows} loading={loading}>
-            Save
-          </Button>
-        </Group>
-      </Group>
+      <Paper withBorder radius="sm" p="md" className="masterPanel">
+        <Stack gap="md">
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
+            {inputColumns.map((column) => {
+              const value = form[column.title] ?? '';
+              if (column.type === 'numeric') {
+                return (
+                  <NumberInput
+                    key={column.title}
+                    label={column.title}
+                    value={value as number | ''}
+                    onChange={(next) => setForm((current) => ({ ...current, [column.title]: Number(next) || '' }))}
+                  />
+                );
+              }
+
+              if (column.type === 'dropdown') {
+                return (
+                  <SuggestionTextInput
+                    key={column.title}
+                    label={column.title}
+                    suggestions={column.source ?? []}
+                    value={String(value || '')}
+                    onValueChange={(next) => setForm((current) => ({ ...current, [column.title]: next }))}
+                    submitOnEnter={() => setTimeout(() => void saveRecord(), 0)}
+                  />
+                );
+              }
+
+              return (
+                <TextInput
+                  key={column.title}
+                  label={column.title}
+                  type={column.type === 'calendar' ? 'date' : 'text'}
+                  value={String(value ?? '')}
+                  onChange={(event) =>
+                    setForm((current) => ({ ...current, [column.title]: event.currentTarget.value }))
+                  }
+                />
+              );
+            })}
+          </SimpleGrid>
+
+          <div className="formActions">
+            <Button leftSection={<Save size={16} />} onClick={saveRecord} loading={loading}>
+              Save
+            </Button>
+            <Button leftSection={<RefreshCw size={16} />} variant="light" onClick={loadRows} loading={loading}>
+              Refresh
+            </Button>
+          </div>
+        </Stack>
+      </Paper>
 
       {!isSupabaseConfigured && (
         <Alert icon={<AlertCircle size={16} />} color="yellow" title="Supabase is not configured">
-          Create a .env file from .env.example, add your project URL and anon key, then restart the dev server.
+          Supabase credentials are missing from .env.
         </Alert>
       )}
 
@@ -152,11 +180,7 @@ export function SpreadsheetEditor({ config }: Props) {
 
       {message && <Badge variant="light">{message}</Badge>}
 
-      <Paper withBorder radius="sm" className="sheetShell">
-        <ScrollArea type="auto">
-          <div ref={hostRef} className="spreadsheetHost" />
-        </ScrollArea>
-      </Paper>
+      <CustomExcelTable columns={tableColumns} data={rows} />
     </Stack>
   );
 }

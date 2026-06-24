@@ -1,5 +1,5 @@
 {
-  "name": "ready-mix-erp",
+  "name": "solid-batching",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -12,7 +12,6 @@
     "@mantine/core": "^8.3.9",
     "@mantine/hooks": "^8.3.9",
     "@supabase/supabase-js": "^2.89.0",
-    "jspreadsheet-ce": "^5.0.4",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
