@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { Alert, Button, Stack } from "@mantine/core";
 import { AlertCircle, RefreshCw } from "lucide-react";
-import { CustomExcelTable, type ExcelColumn } from "../components/CustomExcelTable";
+import {
+  CustomExcelTable,
+  type ExcelColumn,
+} from "../components/CustomExcelTable";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 
 type ClientRow = {
@@ -31,14 +34,44 @@ type SummaryRecord = {
 };
 
 const columns: ExcelColumn<ClientRow>[] = [
-  { key: "client_name", label: "Client", width: 220, sortable: true },
-  { key: "sale_or_number", label: "OR No", type: "number", width: 100, sortable: true },
-  { key: "sale_date", label: "Date", type: "date", width: 120, sortable: true },
-  { key: "design", label: "Design", width: 140, sortable: true },
-  { key: "cubic_volume", label: "Cubic", type: "number", width: 110, sortable: true },
-  { key: "total_amount", label: "Total", type: "number", width: 130, sortable: true },
-  { key: "paid_amount", label: "Paid", type: "number", width: 130, sortable: true },
-  { key: "balance_amount", label: "Unpaid", type: "number", width: 130, sortable: true },
+  { key: "client_name", label: "Client", width: 150, sortable: true },
+  {
+    key: "sale_or_number",
+    label: "OR",
+    type: "number",
+    width: 70,
+    sortable: true,
+  },
+  { key: "sale_date", label: "Date", type: "date", width: 110, sortable: true },
+  { key: "design", label: "Design", width: 170, sortable: true },
+  {
+    key: "cubic_volume",
+    label: "Cubic",
+    type: "number",
+    width: 80,
+    sortable: true,
+  },
+  {
+    key: "total_amount",
+    label: "Total",
+    type: "number",
+    width: 110,
+    sortable: true,
+  },
+  {
+    key: "paid_amount",
+    label: "Paid",
+    type: "number",
+    width: 110,
+    sortable: true,
+  },
+  {
+    key: "balance_amount",
+    label: "Unpaid",
+    type: "number",
+    width: 130,
+    sortable: true,
+  },
   { key: "payment_status", label: "Status", width: 120, sortable: true },
 ];
 
@@ -87,11 +120,11 @@ export function CustomersPage() {
   }, []);
 
   return (
-    <Stack gap='md'>
-      <div className='formActions'>
+    <Stack gap="md">
+      <div className="formActions">
         <Button
           leftSection={<RefreshCw size={16} />}
-          variant='light'
+          variant="light"
           onClick={loadClients}
           loading={loading}
         >
@@ -102,8 +135,8 @@ export function CustomersPage() {
       {!isSupabaseConfigured && (
         <Alert
           icon={<AlertCircle size={16} />}
-          color='yellow'
-          title='Supabase is not configured'
+          color="yellow"
+          title="Supabase is not configured"
         >
           Supabase credentials are missing from .env.
         </Alert>
@@ -112,17 +145,14 @@ export function CustomersPage() {
       {error && (
         <Alert
           icon={<AlertCircle size={16} />}
-          color='red'
-          title='Database error'
+          color="red"
+          title="Database error"
         >
           {error}
         </Alert>
       )}
 
-      <CustomExcelTable
-        columns={columns}
-        data={rows}
-      />
+      <CustomExcelTable columns={columns} data={rows} />
     </Stack>
   );
 }

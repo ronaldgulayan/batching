@@ -106,8 +106,20 @@ const paymentMethods: { value: PaymentMethod; label: string }[] = [
 const paymentColumns: ExcelColumn<PaymentRow>[] = [
   { key: "document_number", label: "OR", width: 120, sortable: true },
   { key: "account_name", label: "Client", width: 220, sortable: true },
-  { key: "payment_date", label: "Date", type: "date", width: 120, sortable: true },
-  { key: "amount", label: "Amount", type: "number", width: 140, sortable: true },
+  {
+    key: "payment_date",
+    label: "Date",
+    type: "date",
+    width: 120,
+    sortable: true,
+  },
+  {
+    key: "amount",
+    label: "Amount",
+    type: "number",
+    width: 140,
+    sortable: true,
+  },
   { key: "payment_method", label: "Method", width: 130, sortable: true },
   { key: "reference_number", label: "Reference", width: 160, sortable: true },
   { key: "remarks", label: "Remarks", width: 260 },
@@ -127,14 +139,16 @@ const salesOr = (value: SalesPaymentRecord["sales_records"]) => {
 };
 
 const money = (value: number) =>
-  `PHP ${value.toLocaleString(undefined, {
+  `₱${value.toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
 
 export function PaymentsPage() {
   const [payableSales, setPayableSales] = useState<PayableSale[]>([]);
-  const [paymentDrafts, setPaymentDrafts] = useState<Record<string, PaymentDraft>>({});
+  const [paymentDrafts, setPaymentDrafts] = useState<
+    Record<string, PaymentDraft>
+  >({});
   const [salesPeople, setSalesPeople] = useState<SalesPerson[]>([]);
   const [rows, setRows] = useState<PaymentRow[]>([]);
   const [form, setForm] = useState<PaymentForm>(emptyForm);
@@ -162,34 +176,40 @@ export function PaymentsPage() {
     setMessage("");
 
     try {
-      const [salesSummary, salesPayments, salesPeopleResult] = await Promise.all([
-        supabase
-          .from("sales_billing_summary")
-          .select("id,sale_or_number,sale_date,customer_name,total_amount,paid_amount,balance_amount")
-          .gt("balance_amount", 0)
-          .order("sale_or_number", { ascending: false }),
-        supabase
-          .from("sales_payments")
-          .select(
-            "id,payment_date,amount,payment_method,reference_number,remarks,sales_records(sale_or_number,manual_customer_name,customers(name))",
-          )
-          .order("payment_date", { ascending: false })
-          .limit(300),
-        supabase.from("sales_people").select("id,name").order("name"),
-      ]);
+      const [salesSummary, salesPayments, salesPeopleResult] =
+        await Promise.all([
+          supabase
+            .from("sales_billing_summary")
+            .select(
+              "id,sale_or_number,sale_date,customer_name,total_amount,paid_amount,balance_amount",
+            )
+            .gt("balance_amount", 0)
+            .order("sale_or_number", { ascending: false }),
+          supabase
+            .from("sales_payments")
+            .select(
+              "id,payment_date,amount,payment_method,reference_number,remarks,sales_records(sale_or_number,manual_customer_name,customers(name))",
+            )
+            .order("payment_date", { ascending: false })
+            .limit(300),
+          supabase.from("sales_people").select("id,name").order("name"),
+        ]);
 
-      const firstError = salesSummary.error ?? salesPayments.error ?? salesPeopleResult.error;
+      const firstError =
+        salesSummary.error ?? salesPayments.error ?? salesPeopleResult.error;
       if (firstError) throw new Error(firstError.message);
 
-      const sales = ((salesSummary.data ?? []) as unknown as PayableSale[]).map((sale) => ({
-        id: sale.id,
-        sale_or_number: Number(sale.sale_or_number || 0),
-        sale_date: sale.sale_date,
-        customer_name: sale.customer_name ?? "No client",
-        total_amount: Number(sale.total_amount || 0),
-        paid_amount: Number(sale.paid_amount || 0),
-        balance_amount: Number(sale.balance_amount || 0),
-      }));
+      const sales = ((salesSummary.data ?? []) as unknown as PayableSale[]).map(
+        (sale) => ({
+          id: sale.id,
+          sale_or_number: Number(sale.sale_or_number || 0),
+          sale_date: sale.sale_date,
+          customer_name: sale.customer_name ?? "No client",
+          total_amount: Number(sale.total_amount || 0),
+          paid_amount: Number(sale.paid_amount || 0),
+          balance_amount: Number(sale.balance_amount || 0),
+        }),
+      );
       setPayableSales(sales);
       setPaymentDrafts((current) => {
         const nextDrafts: Record<string, PaymentDraft> = {};
@@ -203,26 +223,34 @@ export function PaymentsPage() {
       });
 
       setSalesPeople(
-        ((salesPeopleResult.data ?? []) as { id: string; name: string }[]).map((person) => ({
-          id: person.id,
-          label: person.name,
-        })),
+        ((salesPeopleResult.data ?? []) as { id: string; name: string }[]).map(
+          (person) => ({
+            id: person.id,
+            label: person.name,
+          }),
+        ),
       );
 
       setRows(
-        ((salesPayments.data ?? []) as unknown as SalesPaymentRecord[]).map((payment) => ({
-          id: payment.id,
-          document_number: salesOr(payment.sales_records),
-          account_name: salesCustomer(payment.sales_records),
-          payment_date: payment.payment_date,
-          amount: Number(payment.amount || 0),
-          payment_method: payment.payment_method,
-          reference_number: payment.reference_number ?? "",
-          remarks: payment.remarks ?? "",
-        })),
+        ((salesPayments.data ?? []) as unknown as SalesPaymentRecord[]).map(
+          (payment) => ({
+            id: payment.id,
+            document_number: salesOr(payment.sales_records),
+            account_name: salesCustomer(payment.sales_records),
+            payment_date: payment.payment_date,
+            amount: Number(payment.amount || 0),
+            payment_method: payment.payment_method,
+            reference_number: payment.reference_number ?? "",
+            remarks: payment.remarks ?? "",
+          }),
+        ),
       );
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Unable to load payments.");
+      setError(
+        loadError instanceof Error
+          ? loadError.message
+          : "Unable to load payments.",
+      );
     } finally {
       setLoading(false);
     }
@@ -253,7 +281,11 @@ export function PaymentsPage() {
       return;
     }
 
-    if (!form.payment_date || !form.payment_method || !form.sales_person.trim()) {
+    if (
+      !form.payment_date ||
+      !form.payment_method ||
+      !form.sales_person.trim()
+    ) {
       setError("Payment Date, Method, and Sales are required.");
       return;
     }
@@ -291,26 +323,39 @@ export function PaymentsPage() {
         payment_date: form.payment_date,
         amount: Number(draft.amount || 0),
         payment_method: form.payment_method,
-        reference_number: form.payment_method === "CK" ? form.ck_number.trim() : null,
+        reference_number:
+          form.payment_method === "CK" ? form.ck_number.trim() : null,
         remarks,
       }));
 
-      const { error: insertError } = await supabase.from("sales_payments").insert(payload);
+      const { error: insertError } = await supabase
+        .from("sales_payments")
+        .insert(payload);
       if (insertError) throw new Error(insertError.message);
 
       await Promise.all(
         selectedDrafts.map(({ sale, draft }) => {
           const nextPaidAmount = sale.paid_amount + Number(draft.amount || 0);
-          const status = nextPaidAmount >= sale.total_amount ? "paid" : "deposit";
-          return supabase.from("sales_records").update({ payment_status: status }).eq("id", sale.id);
+          const status =
+            nextPaidAmount >= sale.total_amount ? "paid" : "deposit";
+          return supabase
+            .from("sales_records")
+            .update({ payment_status: status })
+            .eq("id", sale.id);
         }),
       );
 
-      setMessage(`Saved ${payload.length} payment${payload.length === 1 ? "" : "s"}.`);
+      setMessage(
+        `Saved ${payload.length} payment${payload.length === 1 ? "" : "s"}.`,
+      );
       setForm(emptyForm);
       await loadRows();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Unable to save payment.");
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Unable to save payment.",
+      );
     } finally {
       setLoading(false);
     }
@@ -321,18 +366,18 @@ export function PaymentsPage() {
   }, []);
 
   return (
-    <Stack gap='md'>
-      <Paper withBorder radius='sm' p='md' className='masterPanel'>
+    <Stack gap="md">
+      <Paper withBorder radius="sm" p="md" className="masterPanel">
         <form
           onSubmit={(event) => {
             event.preventDefault();
             void savePayments();
           }}
         >
-          <Stack gap='md'>
+          <Stack gap="md">
             <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
               <Select
-                label='Payment Method'
+                label="Payment Method"
                 data={paymentMethods}
                 value={form.payment_method}
                 allowDeselect={false}
@@ -347,82 +392,103 @@ export function PaymentsPage() {
                 }
               />
               <TextInput
-                label='Payment Date'
-                type='date'
+                label="Payment Date"
+                type="date"
                 value={form.payment_date}
                 onChange={(event) =>
-                  setForm((current) => ({ ...current, payment_date: event.currentTarget.value }))
+                  setForm((current) => ({
+                    ...current,
+                    payment_date: event.currentTarget.value,
+                  }))
                 }
               />
               <SuggestionTextInput
-                label='Sales'
+                label="Sales"
                 value={form.sales_person}
                 suggestions={salesPeople.map((person) => person.label)}
-                onValueChange={(value) => setForm((current) => ({ ...current, sales_person: value }))}
-                onCommit={(value) => setForm((current) => ({ ...current, sales_person: value }))}
+                onValueChange={(value) =>
+                  setForm((current) => ({ ...current, sales_person: value }))
+                }
+                onCommit={(value) =>
+                  setForm((current) => ({ ...current, sales_person: value }))
+                }
                 submitOnEnter={() => setTimeout(() => void savePayments(), 0)}
               />
               {form.payment_method === "CK" && (
                 <TextInput
-                  label='CK No'
+                  label="CK No"
                   value={form.ck_number}
                   onChange={(event) =>
-                    setForm((current) => ({ ...current, ck_number: event.currentTarget.value }))
+                    setForm((current) => ({
+                      ...current,
+                      ck_number: event.currentTarget.value,
+                    }))
                   }
                 />
               )}
               {form.payment_method === "CK" && (
                 <TextInput
-                  label='Counter Date'
-                  type='date'
+                  label="Counter Date"
+                  type="date"
                   value={form.counter_date}
                   onChange={(event) =>
-                    setForm((current) => ({ ...current, counter_date: event.currentTarget.value }))
+                    setForm((current) => ({
+                      ...current,
+                      counter_date: event.currentTarget.value,
+                    }))
                   }
                 />
               )}
               {form.payment_method === "DEPOSIT" && (
                 <TextInput
-                  label='Counter'
+                  label="Counter"
                   value={form.counter}
                   onChange={(event) =>
-                    setForm((current) => ({ ...current, counter: event.currentTarget.value }))
+                    setForm((current) => ({
+                      ...current,
+                      counter: event.currentTarget.value,
+                    }))
                   }
                 />
               )}
             </SimpleGrid>
 
-            <Group justify='space-between'>
+            <Group justify="space-between">
               <Group>
-                <Button leftSection={<Save size={16} />} type='submit' loading={loading}>
+                <Button
+                  leftSection={<Save size={16} />}
+                  type="submit"
+                  loading={loading}
+                >
                   Save Payments
                 </Button>
                 <Button
-                  type='button'
+                  type="button"
                   leftSection={<RefreshCw size={16} />}
-                  variant='light'
+                  variant="light"
                   onClick={loadRows}
                   loading={loading}
                 >
                   Refresh
                 </Button>
               </Group>
-              <Badge variant='light'>
-                Selected: {selectedDrafts.length} | Amount: {money(selectedTotal)}
+              <Badge variant="light">
+                Selected: {selectedDrafts.length} | Amount:{" "}
+                {money(selectedTotal)}
               </Badge>
             </Group>
           </Stack>
         </form>
       </Paper>
 
-      <Paper withBorder radius='sm' p='md' className='masterPanel'>
-        <Stack gap='sm'>
-          <Group justify='space-between'>
-            <Badge variant='outline'>Payable Sales</Badge>
-            <Badge variant='light'>{payableSales.length} open ORs</Badge>
+      <Paper withBorder radius="sm" p="md" className="masterPanel">
+        <Stack gap="sm">
+          <Group justify="space-between">
+            <Badge variant="outline">Payable Sales</Badge>
+            <Badge variant="light">{payableSales.length} open ORs</Badge>
           </Group>
-          <ScrollArea type='auto'>
-            <Table miw={980} verticalSpacing='xs'>
+          <ScrollArea type="auto">
+            <Table miw={980} verticalSpacing="xs">
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>Pay</Table.Th>
@@ -437,7 +503,10 @@ export function PaymentsPage() {
               </Table.Thead>
               <Table.Tbody>
                 {payableSales.map((sale) => {
-                  const draft = paymentDrafts[sale.id] ?? { selected: false, amount: sale.balance_amount };
+                  const draft = paymentDrafts[sale.id] ?? {
+                    selected: false,
+                    amount: sale.balance_amount,
+                  };
 
                   return (
                     <Table.Tr key={sale.id}>
@@ -445,7 +514,9 @@ export function PaymentsPage() {
                         <Checkbox
                           checked={draft.selected}
                           onChange={(event) =>
-                            updateDraft(sale.id, { selected: event.currentTarget.checked })
+                            updateDraft(sale.id, {
+                              selected: event.currentTarget.checked,
+                            })
                           }
                         />
                       </Table.Td>
@@ -457,13 +528,15 @@ export function PaymentsPage() {
                       <Table.Td>{money(sale.balance_amount)}</Table.Td>
                       <Table.Td>
                         <NumberInput
+                          w={140}
                           min={0}
                           max={sale.balance_amount}
                           value={draft.amount}
                           onChange={(value) =>
                             updateDraft(sale.id, {
                               amount: Number(value) || "",
-                              selected: draft.selected || Number(value || 0) > 0,
+                              selected:
+                                draft.selected || Number(value || 0) > 0,
                             })
                           }
                         />
@@ -483,18 +556,26 @@ export function PaymentsPage() {
       </Paper>
 
       {!isSupabaseConfigured && (
-        <Alert icon={<AlertCircle size={16} />} color='yellow' title='Supabase is not configured'>
+        <Alert
+          icon={<AlertCircle size={16} />}
+          color="yellow"
+          title="Supabase is not configured"
+        >
           Supabase credentials are missing from .env.
         </Alert>
       )}
 
       {error && (
-        <Alert icon={<AlertCircle size={16} />} color='red' title='Database error'>
+        <Alert
+          icon={<AlertCircle size={16} />}
+          color="red"
+          title="Database error"
+        >
           {error}
         </Alert>
       )}
 
-      {message && <Alert color='green'>{message}</Alert>}
+      {message && <Alert color="green">{message}</Alert>}
 
       <CustomExcelTable columns={paymentColumns} data={rows} />
     </Stack>

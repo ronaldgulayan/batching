@@ -577,24 +577,19 @@ export function SalesPage() {
   }, []);
 
   return (
-    <Stack gap='md'>
-      <Paper
-        withBorder
-        radius='sm'
-        p='md'
-        className='masterPanel'
-      >
+    <Stack gap="md">
+      <Paper withBorder radius="sm" p="md" className="masterPanel">
         <form
           onSubmit={(event) => {
             event.preventDefault();
             void saveSale();
           }}
         >
-          <Stack gap='md'>
+          <Stack gap="md">
             <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
               <TextInput
-                label='Date'
-                type='date'
+                label="Date"
+                type="date"
                 value={form.sale_date}
                 onChange={(event) =>
                   setForm((current) => ({
@@ -604,7 +599,7 @@ export function SalesPage() {
                 }
               />
               <NumberInput
-                label='OR No'
+                label="OR No"
                 min={nextOrNumber}
                 value={form.sale_or_number}
                 onChange={(value) =>
@@ -615,7 +610,7 @@ export function SalesPage() {
                 }
               />
               <SuggestionTextInput
-                label='Client Name'
+                label="Client Name"
                 value={form.client_name}
                 suggestions={customers.map((customer) => customer.label)}
                 onValueChange={(value) =>
@@ -624,7 +619,7 @@ export function SalesPage() {
                 submitOnEnter={() => setTimeout(() => void saveSale(), 0)}
               />
               <SuggestionTextInput
-                label='Design'
+                label="Design"
                 value={form.design_label}
                 suggestions={designs.map((design) => design.label)}
                 onValueChange={(value) =>
@@ -644,7 +639,7 @@ export function SalesPage() {
                 submitOnEnter={() => setTimeout(() => void saveSale(), 0)}
               />
               <SuggestionTextInput
-                label='Site'
+                label="Site"
                 value={form.project_site}
                 suggestions={sites.map((site) => site.label)}
                 onValueChange={(value) =>
@@ -653,7 +648,7 @@ export function SalesPage() {
                 submitOnEnter={() => setTimeout(() => void saveSale(), 0)}
               />
               <NumberInput
-                label='Cubic'
+                label="Cubic"
                 min={0}
                 value={form.cubic_volume}
                 onChange={(value) =>
@@ -664,7 +659,7 @@ export function SalesPage() {
                 }
               />
               <NumberInput
-                label='Price'
+                label="Price"
                 min={0}
                 value={form.unit_price}
                 onChange={(value) =>
@@ -675,77 +670,67 @@ export function SalesPage() {
                 }
               />
               <NumberInput
-                label='Total'
+                label="Total"
                 value={total}
                 readOnly
-                thousandSeparator=','
+                thousandSeparator=","
                 decimalScale={2}
               />
             </SimpleGrid>
 
-            <Group justify='space-between'>
+            <Group justify="space-between">
               <Group>
                 <Button
                   leftSection={<Save size={16} />}
-                  type='submit'
+                  type="submit"
                   loading={loading}
                 >
                   Save Sale
                 </Button>
                 <NumberInput
-                  aria-label='Number of copies'
+                  aria-label="Number of copies"
                   value={batchCount}
                   onChange={(e) => setBatchCount(e.toString())}
                   w={88}
                 />
                 <Button
-                  type='button'
+                  type="button"
                   leftSection={<CopyPlus size={16} />}
-                  variant='light'
+                  variant="light"
                   onClick={createBatchDrafts}
                   disabled={loading}
                 >
                   Create Copies
                 </Button>
                 <Button
-                  type='button'
+                  type="button"
                   leftSection={<RefreshCw size={16} />}
-                  variant='light'
+                  variant="light"
                   onClick={loadRows}
                   loading={loading}
                 >
                   Refresh
                 </Button>
               </Group>
-              <Badge variant='light'>Next OR No: {displayedNextOrNumber}</Badge>
+              <Badge variant="light">Next OR No: {displayedNextOrNumber}</Badge>
             </Group>
 
             <Modal
               opened={batchModalOpen && hasBatchDrafts}
               onClose={closeBatchDrafts}
-              title='Multiple Sales'
-              size='95%'
+              title="Multiple Sales"
+              size="95%"
               closeOnClickOutside={!loading}
               closeOnEscape={!loading}
             >
-              <Stack gap='sm'>
-                <Group justify='space-between'>
-                  <Badge variant='outline'>
+              <Stack gap="sm">
+                <Group justify="space-between">
+                  <Badge variant="outline">
                     {batchDrafts.length} editable sales ready
                   </Badge>
                   <Group>
                     <Button
-                      type='button'
-                      leftSection={<X size={16} />}
-                      variant='light'
-                      color='gray'
-                      onClick={closeBatchDrafts}
-                      disabled={loading}
-                    >
-                      Close Multiple
-                    </Button>
-                    <Button
-                      type='button'
+                      type="button"
                       leftSection={<Save size={16} />}
                       onClick={saveBatchSales}
                       loading={loading}
@@ -754,11 +739,11 @@ export function SalesPage() {
                     </Button>
                   </Group>
                 </Group>
-                <ScrollArea type='auto'>
+                <ScrollArea type="auto">
                   <Table
-                    className='batchSalesTable'
+                    className="batchSalesTable"
                     miw={1060}
-                    verticalSpacing='xs'
+                    verticalSpacing="xs"
                   >
                     <Table.Thead>
                       <Table.Tr>
@@ -770,7 +755,7 @@ export function SalesPage() {
                         <Table.Th>Cubic</Table.Th>
                         <Table.Th>Price</Table.Th>
                         <Table.Th>Total</Table.Th>
-                        <Table.Th aria-label='Actions' />
+                        <Table.Th aria-label="Actions" />
                       </Table.Tr>
                     </Table.Thead>
                     <Table.Tbody>
@@ -802,7 +787,7 @@ export function SalesPage() {
                             </Table.Td>
                             <Table.Td>
                               <TextInput
-                                type='date'
+                                type="date"
                                 value={draft.sale_date}
                                 onChange={(event) =>
                                   updateBatchDraft(draft.id, {
@@ -886,10 +871,10 @@ export function SalesPage() {
                             </Table.Td>
                             <Table.Td>
                               <ActionIcon
-                                type='button'
-                                aria-label='Remove row'
-                                color='red'
-                                variant='subtle'
+                                type="button"
+                                aria-label="Remove row"
+                                color="red"
+                                variant="subtle"
                                 onClick={() => removeBatchDraft(draft.id)}
                               >
                                 <Trash2 size={16} />
@@ -910,8 +895,8 @@ export function SalesPage() {
       {!isSupabaseConfigured && (
         <Alert
           icon={<AlertCircle size={16} />}
-          color='yellow'
-          title='Supabase is not configured'
+          color="yellow"
+          title="Supabase is not configured"
         >
           Supabase credentials are missing from .env.
         </Alert>
@@ -920,19 +905,16 @@ export function SalesPage() {
       {error && (
         <Alert
           icon={<AlertCircle size={16} />}
-          color='red'
-          title='Database error'
+          color="red"
+          title="Database error"
         >
           {error}
         </Alert>
       )}
 
-      {message && <Alert color='green'>{message}</Alert>}
+      {message && <Alert color="green">{message}</Alert>}
 
-      <CustomExcelTable
-        columns={saleColumns}
-        data={rows}
-      />
+      <CustomExcelTable columns={saleColumns} data={rows} />
     </Stack>
   );
 }
