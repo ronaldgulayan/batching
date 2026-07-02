@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   ActionIcon,
@@ -17,6 +17,7 @@ import {
 import {
   AlertCircle,
   CopyPlus,
+  Edit3,
   RefreshCw,
   Save,
   Trash2,
@@ -138,6 +139,7 @@ const saleColumns: ExcelColumn<SaleRow>[] = [
 ];
 
 export function SalesPage() {
+  const formPanelRef = useRef<HTMLDivElement | null>(null);
   const [rows, setRows] = useState<SaleRow[]>([]);
   const [customers, setCustomers] = useState<Lookup[]>([]);
   const [designs, setDesigns] = useState<Lookup[]>([]);
@@ -146,10 +148,15 @@ export function SalesPage() {
   const [batchCount, setBatchCount] = useState("2");
   const [batchDrafts, setBatchDrafts] = useState<BatchSaleDraft[]>([]);
   const [batchModalOpen, setBatchModalOpen] = useState(false);
+  const [editingSale, setEditingSale] = useState<{
+    id: string;
+    originalOrNumber: number;
+  } | null>(null);
   const [nextOrNumber, setNextOrNumber] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [salesSearch, setSalesSearch] = useState("");
   const hasBatchDrafts = batchDrafts.length > 0;
 
   const total = useMemo(
@@ -165,6 +172,29 @@ export function SalesPage() {
 
     return Math.max(nextOrNumber, formOrNumber + 1, batchMaxOrNumber + 1);
   }, [batchDrafts, form.sale_or_number, nextOrNumber]);
+
+  const filteredRows = useMemo(() => {
+    const cleaned = salesSearch.trim().toLowerCase();
+    if (!cleaned) return rows;
+
+    return rows.filter((row) =>
+      [
+        `OR ${row.sale_or_number}`,
+        row.sale_or_number,
+        row.sale_date,
+        row.client_name,
+        row.design,
+        row.site,
+        row.cubic_volume,
+        row.unit_price,
+        row.total_amount,
+        row.payment_status,
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(cleaned),
+    );
+  }, [rows, salesSearch]);
 
   async function loadLookups() {
     const [
@@ -401,7 +431,10 @@ export function SalesPage() {
     const designId =
       draft.concrete_design_id ?? designIdFromLabel(draft.design_label);
 
-    if (orNumber < nextOrNumber) {
+    const isKeepingEditedOrNumber =
+      editingSale && orNumber === editingSale.originalOrNumber;
+
+    if (!isKeepingEditedOrNumber && orNumber < nextOrNumber) {
       return `${rowLabel}: OR No must be ${nextOrNumber} or higher. Used or skipped numbers cannot be reused.`;
     }
 
@@ -415,6 +448,35 @@ export function SalesPage() {
     }
 
     return "";
+  }
+
+  function startEditSale(row: SaleRow) {
+    setEditingSale({ id: row.id, originalOrNumber: row.sale_or_number });
+    setError("");
+    setMessage("");
+    setForm({
+      sale_date: row.sale_date,
+      sale_or_number: row.sale_or_number,
+      client_name: row.client_name,
+      concrete_design_id: designIdFromLabel(row.design),
+      design_label: row.design,
+      project_site: row.site,
+      cubic_volume: row.cubic_volume,
+      unit_price: row.unit_price,
+    });
+    requestAnimationFrame(() => {
+      formPanelRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }
+
+  function cancelEditSale() {
+    setEditingSale(null);
+    setError("");
+    setMessage("");
+    setForm({ ...emptyForm, sale_or_number: nextOrNumber });
   }
 
   async function saveBatchSales() {
@@ -544,24 +606,36 @@ export function SalesPage() {
       const siteName = await ensureSiteName(form.project_site);
       if (!siteName) throw new Error("Site is required.");
 
-      const { error: insertError } = await supabase
-        .from("sales_records")
-        .insert({
-          sale_or_number: orNumber,
-          sale_date: form.sale_date,
-          customer_id: customerId,
-          manual_customer_name: null,
-          concrete_design_id: designId,
-          project_site: siteName,
-          cubic_volume: Number(form.cubic_volume || 0),
-          unit_price: Number(form.unit_price || 0),
-          payment_status: "unpaid",
-        });
+      const salePayload = {
+        sale_or_number: orNumber,
+        sale_date: form.sale_date,
+        customer_id: customerId,
+        manual_customer_name: null,
+        concrete_design_id: designId,
+        project_site: siteName,
+        cubic_volume: Number(form.cubic_volume || 0),
+        unit_price: Number(form.unit_price || 0),
+      };
+
+      const { error: insertError } = editingSale
+        ? await supabase
+            .from("sales_records")
+            .update(salePayload)
+            .eq("id", editingSale.id)
+        : await supabase
+            .from("sales_records")
+            .insert({ ...salePayload, payment_status: "unpaid" });
 
       if (insertError) throw new Error(insertError.message);
 
-      setMessage(`Saved sale OR No ${orNumber}.`);
-      setForm({ ...emptyForm, sale_or_number: orNumber + 1 });
+      setMessage(
+        editingSale ? `Updated sale OR No ${orNumber}.` : `Saved sale OR No ${orNumber}.`,
+      );
+      setEditingSale(null);
+      setForm({
+        ...emptyForm,
+        sale_or_number: Math.max(nextOrNumber, orNumber + 1),
+      });
       await loadRows();
     } catch (saveError) {
       setError(
@@ -600,7 +674,7 @@ export function SalesPage() {
               />
               <NumberInput
                 label="OR No"
-                min={nextOrNumber}
+                min={editingSale ? 1 : nextOrNumber}
                 value={form.sale_or_number}
                 onChange={(value) =>
                   setForm((current) => ({
@@ -685,20 +759,33 @@ export function SalesPage() {
                   type="submit"
                   loading={loading}
                 >
-                  Save Sale
+                  {editingSale ? "Save Changes" : "Save Sale"}
                 </Button>
+                {editingSale && (
+                  <Button
+                    type="button"
+                    leftSection={<X size={16} />}
+                    variant="light"
+                    color="gray"
+                    onClick={cancelEditSale}
+                    disabled={loading}
+                  >
+                    Cancel
+                  </Button>
+                )}
                 <NumberInput
                   aria-label="Number of copies"
                   value={batchCount}
                   onChange={(e) => setBatchCount(e.toString())}
                   w={88}
+                  disabled={Boolean(editingSale)}
                 />
                 <Button
                   type="button"
                   leftSection={<CopyPlus size={16} />}
                   variant="light"
                   onClick={createBatchDrafts}
-                  disabled={loading}
+                  disabled={loading || Boolean(editingSale)}
                 >
                   Create Copies
                 </Button>
@@ -914,7 +1001,50 @@ export function SalesPage() {
 
       {message && <Alert color="green">{message}</Alert>}
 
-      <CustomExcelTable columns={saleColumns} data={rows} />
+      <Paper
+        ref={formPanelRef}
+        withBorder
+        radius="sm"
+        p="md"
+        className="masterPanel"
+      >
+        <Group justify="space-between" mb="sm">
+          <Badge variant="outline">Sales List</Badge>
+          <Badge variant="light">
+            {filteredRows.length} of {rows.length} records
+          </Badge>
+        </Group>
+        <TextInput
+          placeholder="Search any sale"
+          value={salesSearch}
+          onChange={(event) => setSalesSearch(event.currentTarget.value)}
+        />
+      </Paper>
+
+      <CustomExcelTable
+        columns={saleColumns}
+        data={filteredRows}
+        renderRowActions={(row) => (
+          <Button
+            size="xs"
+            variant="subtle"
+            leftSection={<Edit3 size={14} />}
+            onClick={() => startEditSale(row)}
+          >
+            Edit
+          </Button>
+        )}
+        renderCell={(row, column) => {
+          if (column.key !== "payment_status") return undefined;
+
+          const isPaid = row.payment_status === "paid";
+          return (
+            <Badge color={isPaid ? "green" : "red"} variant="light">
+              {isPaid ? "paid" : "unpaid"}
+            </Badge>
+          );
+        }}
+      />
     </Stack>
   );
 }

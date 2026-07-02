@@ -11,6 +11,7 @@ import {
 import { useDisclosure } from "@mantine/hooks";
 import { Building2, Wrench } from "lucide-react";
 import { CustomersPage } from "./pages/CustomersPage";
+import { DashboardPage } from "./pages/DashboardPage";
 import { ExpensesPurchasingPage } from "./pages/ExpensesPurchasingPage";
 import { GrabaPage } from "./pages/GrabaPage";
 import { MaintenanceDesignsPage } from "./pages/MaintenanceDesignsPage";
@@ -24,7 +25,7 @@ import type { ModuleKey } from "./types";
 
 export function App() {
   const [opened, { toggle, close }] = useDisclosure();
-  const [activeModule, setActiveModule] = useState<ModuleKey>("sales");
+  const [activeModule, setActiveModule] = useState<ModuleKey>("dashboard");
   const theme = useMantineTheme();
 
   return (
@@ -112,6 +113,7 @@ export function App() {
 
       <AppShell.Main>
         <div className='page'>
+          {activeModule === "dashboard" && <DashboardPage />}
           {activeModule === "sales" && <SalesPage />}
           {activeModule === "payments" && <PaymentsPage />}
           {activeModule === "customers" && <CustomersPage />}

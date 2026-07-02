@@ -1,4 +1,11 @@
-import { ClipboardList, Landmark, ReceiptText, Truck, UsersRound } from "lucide-react";
+import {
+  ClipboardList,
+  Gauge,
+  Landmark,
+  ReceiptText,
+  Truck,
+  UsersRound,
+} from "lucide-react";
 import type { ModuleKey, SpreadsheetColumn } from "../types";
 
 export type SpreadsheetModuleConfig = {
@@ -66,6 +73,11 @@ export const modules: SpreadsheetModuleConfig[] = [
 ];
 
 export const navItems = [
+  {
+    key: "dashboard" as const,
+    label: "Dashboard",
+    icon: Gauge,
+  },
   {
     key: "sales" as const,
     label: "Sales",

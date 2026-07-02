@@ -1,10 +1,18 @@
-import { useEffect, useState } from "react";
-import { Alert, Button, Stack } from "@mantine/core";
-import { AlertCircle, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  CustomExcelTable,
-  type ExcelColumn,
-} from "../components/CustomExcelTable";
+  Alert,
+  Badge,
+  Button,
+  Group,
+  Paper,
+  ScrollArea,
+  Select,
+  SimpleGrid,
+  Stack,
+  Table,
+  TextInput,
+} from "@mantine/core";
+import { AlertCircle, RefreshCw } from "lucide-react";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 
 type ClientRow = {
@@ -33,52 +41,105 @@ type SummaryRecord = {
   payment_status: string;
 };
 
-const columns: ExcelColumn<ClientRow>[] = [
-  { key: "client_name", label: "Client", width: 150, sortable: true },
-  {
-    key: "sale_or_number",
-    label: "OR",
-    type: "number",
-    width: 70,
-    sortable: true,
-  },
-  { key: "sale_date", label: "Date", type: "date", width: 110, sortable: true },
-  { key: "design", label: "Design", width: 170, sortable: true },
-  {
-    key: "cubic_volume",
-    label: "Cubic",
-    type: "number",
-    width: 80,
-    sortable: true,
-  },
-  {
-    key: "total_amount",
-    label: "Total",
-    type: "number",
-    width: 110,
-    sortable: true,
-  },
-  {
-    key: "paid_amount",
-    label: "Paid",
-    type: "number",
-    width: 110,
-    sortable: true,
-  },
-  {
-    key: "balance_amount",
-    label: "Unpaid",
-    type: "number",
-    width: 130,
-    sortable: true,
-  },
-  { key: "payment_status", label: "Status", width: 120, sortable: true },
-];
+type ClientGroup = {
+  key: string;
+  clientName: string;
+  rows: ClientRow[];
+  totalAmount: number;
+  latestDate: string;
+};
+
+function clientKey(name: string) {
+  return name.trim().toLowerCase() || "no-client";
+}
+
+function clientDateKey(row: ClientRow) {
+  return `${clientKey(row.client_name)}|${row.sale_date}`;
+}
+
+function displayMoney(value: number) {
+  return `PHP ${Number(value || 0).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
 
 export function CustomersPage() {
   const [rows, setRows] = useState<ClientRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [dateFilter, setDateFilter] = useState("");
+  const [designFilter, setDesignFilter] = useState<string | null>(null);
+
+  const designOptions = useMemo(
+    () =>
+      Array.from(new Set(rows.map((row) => row.design).filter(Boolean)))
+        .sort((first, second) => first.localeCompare(second))
+        .map((design) => ({ value: design, label: design })),
+    [rows],
+  );
+
+  const filteredRows = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    return rows.filter((row) => {
+      if (dateFilter && row.sale_date !== dateFilter) return false;
+      if (designFilter && row.design !== designFilter) return false;
+      if (!query) return true;
+
+      return [
+        row.client_name,
+        row.sale_or_number,
+        row.sale_date,
+        row.design,
+        row.cubic_volume,
+        row.total_amount,
+        row.paid_amount,
+        row.balance_amount,
+        row.payment_status,
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(query);
+    });
+  }, [dateFilter, designFilter, rows, search]);
+
+  const groupedRows = useMemo<ClientGroup[]>(() => {
+    const groups = new Map<string, ClientGroup>();
+
+    for (const row of filteredRows) {
+      const key = clientDateKey(row);
+      const group = groups.get(key);
+
+      if (group) {
+        group.rows.push(row);
+        group.totalAmount += row.total_amount;
+        if (row.sale_date > group.latestDate) group.latestDate = row.sale_date;
+      } else {
+        groups.set(key, {
+          key,
+          clientName: row.client_name || "No client",
+          rows: [row],
+          totalAmount: row.total_amount,
+          latestDate: row.sale_date,
+        });
+      }
+    }
+
+    return Array.from(groups.values())
+      .map((group) => ({
+        ...group,
+        rows: [...group.rows].sort((first, second) =>
+          Number(first.sale_or_number) - Number(second.sale_or_number),
+        ),
+      }))
+      .sort((first, second) => {
+        const clientSort = first.clientName.localeCompare(second.clientName);
+        if (clientSort !== 0) return clientSort;
+        return second.latestDate.localeCompare(first.latestDate);
+      });
+  }, [filteredRows]);
 
   async function loadClients() {
     if (!isSupabaseConfigured) return;
@@ -120,11 +181,11 @@ export function CustomersPage() {
   }, []);
 
   return (
-    <Stack gap="md">
-      <div className="formActions">
+    <Stack gap='md'>
+      <div className='formActions'>
         <Button
           leftSection={<RefreshCw size={16} />}
-          variant="light"
+          variant='light'
           onClick={loadClients}
           loading={loading}
         >
@@ -135,8 +196,8 @@ export function CustomersPage() {
       {!isSupabaseConfigured && (
         <Alert
           icon={<AlertCircle size={16} />}
-          color="yellow"
-          title="Supabase is not configured"
+          color='yellow'
+          title='Supabase is not configured'
         >
           Supabase credentials are missing from .env.
         </Alert>
@@ -145,14 +206,122 @@ export function CustomersPage() {
       {error && (
         <Alert
           icon={<AlertCircle size={16} />}
-          color="red"
-          title="Database error"
+          color='red'
+          title='Database error'
         >
           {error}
         </Alert>
       )}
 
-      <CustomExcelTable columns={columns} data={rows} />
+      <Paper
+        withBorder
+        radius='sm'
+        p='md'
+        className='masterPanel'
+      >
+        <Stack gap='md'>
+          <Group justify='space-between'>
+            <Badge variant='outline'>Clients List</Badge>
+            <Badge variant='light'>
+              {filteredRows.length} of {rows.length} records
+            </Badge>
+          </Group>
+          <SimpleGrid
+            cols={{ base: 1, sm: 3 }}
+            spacing='sm'
+          >
+            <TextInput
+              placeholder='Search any'
+              value={search}
+              onChange={(event) => setSearch(event.currentTarget.value)}
+            />
+            <TextInput
+              type='date'
+              value={dateFilter}
+              onChange={(event) => setDateFilter(event.currentTarget.value)}
+            />
+            <Select
+              placeholder='Filter by design'
+              data={designOptions}
+              value={designFilter}
+              onChange={setDesignFilter}
+              clearable
+              searchable
+            />
+          </SimpleGrid>
+        </Stack>
+      </Paper>
+
+      <Paper
+        withBorder
+        radius='sm'
+        p='md'
+        className='masterPanel'
+      >
+        <ScrollArea type='auto'>
+          <Table
+            withTableBorder
+            withColumnBorders
+          >
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Client</Table.Th>
+                <Table.Th>OR</Table.Th>
+                <Table.Th>Date</Table.Th>
+                <Table.Th>Design</Table.Th>
+                <Table.Th>Cubic</Table.Th>
+                <Table.Th>Amount</Table.Th>
+                <Table.Th>Paid</Table.Th>
+                <Table.Th>Unpaid</Table.Th>
+                <Table.Th>Status</Table.Th>
+                <Table.Th>Total</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {groupedRows.map((group) =>
+                group.rows.map((row, index) => {
+                  const isPaid = row.payment_status === "paid";
+
+                  return (
+                    <Table.Tr key={row.id}>
+                      {index === 0 && (
+                        <Table.Td rowSpan={group.rows.length}>
+                          {group.clientName}
+                        </Table.Td>
+                      )}
+                      <Table.Td>{row.sale_or_number}</Table.Td>
+                      <Table.Td>{row.sale_date}</Table.Td>
+                      <Table.Td>{row.design}</Table.Td>
+                      <Table.Td>{row.cubic_volume}</Table.Td>
+                      <Table.Td>{displayMoney(row.total_amount)}</Table.Td>
+                      <Table.Td>{displayMoney(row.paid_amount)}</Table.Td>
+                      <Table.Td>{displayMoney(row.balance_amount)}</Table.Td>
+                      <Table.Td>
+                        <Badge
+                          color={isPaid ? "green" : "red"}
+                          variant='light'
+                        >
+                          {isPaid ? "paid" : "unpaid"}
+                        </Badge>
+                      </Table.Td>
+                      {index === 0 && (
+                        <Table.Td rowSpan={group.rows.length}>
+                          {displayMoney(group.totalAmount)}
+                        </Table.Td>
+                      )}
+                    </Table.Tr>
+                  );
+                }),
+              )}
+              {!groupedRows.length && (
+                <Table.Tr>
+                  <Table.Td colSpan={10}>No clients to display</Table.Td>
+                </Table.Tr>
+              )}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea>
+      </Paper>
     </Stack>
   );
 }

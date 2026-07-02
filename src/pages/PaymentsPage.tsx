@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Badge,
@@ -14,11 +14,7 @@ import {
   Table,
   TextInput,
 } from "@mantine/core";
-import { AlertCircle, RefreshCw, Save } from "lucide-react";
-import {
-  CustomExcelTable,
-  type ExcelColumn,
-} from "../components/CustomExcelTable";
+import { AlertCircle, Edit3, RefreshCw, Save } from "lucide-react";
 import { SuggestionTextInput } from "../components/SuggestionTextInput";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 
@@ -34,41 +30,30 @@ type PayableSale = {
   balance_amount: number;
 };
 
+type PaidSale = PayableSale & {
+  payment_id: string;
+  payment_date: string;
+  payment_amount: number;
+  payment_method: string;
+  ck_number: string;
+  counter_date: string;
+  counter: string;
+  sales_person: string;
+};
+
 type PaymentDraft = {
   selected: boolean;
   amount: number | "";
 };
 
-type PaymentRow = {
-  id: string;
-  document_number: string;
-  account_name: string;
-  payment_date: string;
-  amount: number;
-  payment_method: string;
-  reference_number: string;
-  remarks: string;
-};
-
 type SalesPaymentRecord = {
   id: string;
+  sales_record_id: string;
   payment_date: string;
   amount: number;
   payment_method: string;
   reference_number: string | null;
   remarks: string | null;
-  sales_records?:
-    | {
-        sale_or_number: number | null;
-        manual_customer_name: string | null;
-        customers?: { name: string } | { name: string }[] | null;
-      }
-    | {
-        sale_or_number: number | null;
-        manual_customer_name: string | null;
-        customers?: { name: string } | { name: string }[] | null;
-      }[]
-    | null;
 };
 
 type SalesPerson = {
@@ -83,6 +68,7 @@ type PaymentForm = {
   ck_number: string;
   counter_date: string;
   counter: string;
+  edit_amount: number | "";
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -94,6 +80,7 @@ const emptyForm: PaymentForm = {
   ck_number: "",
   counter_date: "",
   counter: "",
+  edit_amount: "",
 };
 
 const paymentMethods: { value: PaymentMethod; label: string }[] = [
@@ -103,58 +90,55 @@ const paymentMethods: { value: PaymentMethod; label: string }[] = [
   { value: "DEPOSIT", label: "DEPOSIT" },
 ];
 
-const paymentColumns: ExcelColumn<PaymentRow>[] = [
-  { key: "document_number", label: "OR", width: 120, sortable: true },
-  { key: "account_name", label: "Client", width: 220, sortable: true },
-  {
-    key: "payment_date",
-    label: "Date",
-    type: "date",
-    width: 120,
-    sortable: true,
-  },
-  {
-    key: "amount",
-    label: "Amount",
-    type: "number",
-    width: 140,
-    sortable: true,
-  },
-  { key: "payment_method", label: "Method", width: 130, sortable: true },
-  { key: "reference_number", label: "Reference", width: 160, sortable: true },
-  { key: "remarks", label: "Remarks", width: 260 },
-];
+const displayMoney = (value: number) =>
+  `PHP ${value.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 
-const salesCustomer = (value: SalesPaymentRecord["sales_records"]) => {
-  const record = Array.isArray(value) ? value[0] : value;
-  const customer = Array.isArray(record?.customers)
-    ? record?.customers[0]?.name
-    : record?.customers?.name;
-  return customer ?? record?.manual_customer_name ?? "";
-};
-
-const salesOr = (value: SalesPaymentRecord["sales_records"]) => {
-  const record = Array.isArray(value) ? value[0] : value;
-  return `OR ${record?.sale_or_number ?? ""}`;
-};
-
-const money = (value: number) =>
+const formatMoney = (value: number) =>
   `₱${value.toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
 
+function remarkValue(remarks: string | null, label: string) {
+  return (
+    remarks
+      ?.split("|")
+      .map((part) => part.trim())
+      .find((part) => part.toLowerCase().startsWith(`${label.toLowerCase()}:`))
+      ?.slice(label.length + 1)
+      .trim() ?? ""
+  );
+}
+
 export function PaymentsPage() {
+  const formPanelRef = useRef<HTMLDivElement | null>(null);
   const [payableSales, setPayableSales] = useState<PayableSale[]>([]);
+  const [paidSales, setPaidSales] = useState<PaidSale[]>([]);
   const [paymentDrafts, setPaymentDrafts] = useState<
     Record<string, PaymentDraft>
   >({});
   const [salesPeople, setSalesPeople] = useState<SalesPerson[]>([]);
-  const [rows, setRows] = useState<PaymentRow[]>([]);
   const [form, setForm] = useState<PaymentForm>(emptyForm);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [paymentDateError, setPaymentDateError] = useState("");
+  const [salesFieldError, setSalesFieldError] = useState("");
+  const [ckNumberError, setCkNumberError] = useState("");
+  const [editAmountError, setEditAmountError] = useState("");
+  const [amountErrors, setAmountErrors] = useState<Record<string, string>>({});
+  const [editingPayment, setEditingPayment] = useState<{
+    paymentId: string;
+    saleId: string;
+    oldAmount: number;
+    totalAmount: number;
+    paidAmount: number;
+  } | null>(null);
   const [message, setMessage] = useState("");
+  const [unpaidSearch, setUnpaidSearch] = useState("");
+  const [paidSearch, setPaidSearch] = useState("");
 
   const selectedDrafts = useMemo(
     () =>
@@ -169,34 +153,79 @@ export function PaymentsPage() {
     0,
   );
 
+  function saleMatchesSearch(sale: PayableSale, searchValue: string) {
+    const cleaned = searchValue.trim().toLowerCase();
+    if (!cleaned) return true;
+    const paidDetail = sale as Partial<PaidSale>;
+
+    return [
+      `OR ${sale.sale_or_number}`,
+      sale.sale_or_number,
+      sale.sale_date,
+      sale.customer_name,
+      sale.total_amount,
+      sale.paid_amount,
+      sale.balance_amount,
+      displayMoney(sale.total_amount),
+      displayMoney(sale.paid_amount),
+      displayMoney(sale.balance_amount),
+      paidDetail.payment_date ?? "",
+      paidDetail.payment_amount ?? "",
+      paidDetail.payment_amount ? displayMoney(paidDetail.payment_amount) : "",
+      paidDetail.payment_method ?? "",
+      paidDetail.ck_number ?? "",
+      paidDetail.counter_date ?? "",
+      paidDetail.counter ?? "",
+      paidDetail.sales_person ?? "",
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(cleaned);
+  }
+
+  const filteredPayableSales = useMemo(
+    () => payableSales.filter((sale) => saleMatchesSearch(sale, unpaidSearch)),
+    [payableSales, unpaidSearch],
+  );
+
+  const filteredPaidSales = useMemo(
+    () => paidSales.filter((sale) => saleMatchesSearch(sale, paidSearch)),
+    [paidSales, paidSearch],
+  );
+
   async function loadRows() {
     if (!isSupabaseConfigured) return;
     setLoading(true);
     setError("");
+    setPaymentDateError("");
+    setSalesFieldError("");
+    setCkNumberError("");
+    setEditAmountError("");
+    setAmountErrors({});
     setMessage("");
 
     try {
-      const [salesSummary, salesPayments, salesPeopleResult] =
+      const [salesSummary, salesPaymentsResult, salesPeopleResult] =
         await Promise.all([
           supabase
             .from("sales_billing_summary")
             .select(
               "id,sale_or_number,sale_date,customer_name,total_amount,paid_amount,balance_amount",
             )
-            .gt("balance_amount", 0)
             .order("sale_or_number", { ascending: false }),
           supabase
             .from("sales_payments")
             .select(
-              "id,payment_date,amount,payment_method,reference_number,remarks,sales_records(sale_or_number,manual_customer_name,customers(name))",
+              "id,sales_record_id,payment_date,amount,payment_method,reference_number,remarks",
             )
-            .order("payment_date", { ascending: false })
-            .limit(300),
+            .order("payment_date", { ascending: false }),
           supabase.from("sales_people").select("id,name").order("name"),
         ]);
 
       const firstError =
-        salesSummary.error ?? salesPayments.error ?? salesPeopleResult.error;
+        salesSummary.error ??
+        salesPaymentsResult.error ??
+        salesPeopleResult.error;
       if (firstError) throw new Error(firstError.message);
 
       const sales = ((salesSummary.data ?? []) as unknown as PayableSale[]).map(
@@ -210,10 +239,44 @@ export function PaymentsPage() {
           balance_amount: Number(sale.balance_amount || 0),
         }),
       );
-      setPayableSales(sales);
+      const openSales = sales.filter((sale) => sale.balance_amount > 0);
+      const closedSales = sales.filter((sale) => sale.balance_amount <= 0);
+      const latestPaymentBySaleId = new Map<string, SalesPaymentRecord>();
+      for (const payment of (salesPaymentsResult.data ??
+        []) as unknown as SalesPaymentRecord[]) {
+        if (!latestPaymentBySaleId.has(payment.sales_record_id)) {
+          latestPaymentBySaleId.set(payment.sales_record_id, payment);
+        }
+      }
+
+      setPayableSales(openSales);
+      setPaidSales(
+        closedSales.map((sale) => {
+          const payment = latestPaymentBySaleId.get(sale.id);
+          const method = payment?.payment_method ?? "";
+
+          return {
+            ...sale,
+            payment_id: payment?.id ?? "",
+            payment_date: payment?.payment_date ?? "",
+            payment_amount: Number(payment?.amount || 0),
+            payment_method: method,
+            ck_number: method === "CK" ? (payment?.reference_number ?? "") : "",
+            counter_date:
+              method === "CK"
+                ? remarkValue(payment?.remarks ?? null, "Counter Date")
+                : "",
+            counter:
+              method === "DEPOSIT"
+                ? remarkValue(payment?.remarks ?? null, "Counter")
+                : "",
+            sales_person: remarkValue(payment?.remarks ?? null, "Sales"),
+          };
+        }),
+      );
       setPaymentDrafts((current) => {
         const nextDrafts: Record<string, PaymentDraft> = {};
-        for (const sale of sales) {
+        for (const sale of openSales) {
           nextDrafts[sale.id] = current[sale.id] ?? {
             selected: false,
             amount: sale.balance_amount,
@@ -230,21 +293,6 @@ export function PaymentsPage() {
           }),
         ),
       );
-
-      setRows(
-        ((salesPayments.data ?? []) as unknown as SalesPaymentRecord[]).map(
-          (payment) => ({
-            id: payment.id,
-            document_number: salesOr(payment.sales_records),
-            account_name: salesCustomer(payment.sales_records),
-            payment_date: payment.payment_date,
-            amount: Number(payment.amount || 0),
-            payment_method: payment.payment_method,
-            reference_number: payment.reference_number ?? "",
-            remarks: payment.remarks ?? "",
-          }),
-        ),
-      );
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -257,11 +305,71 @@ export function PaymentsPage() {
   }
 
   function updateDraft(saleId: string, patch: Partial<PaymentDraft>) {
-    const previous = paymentDrafts[saleId] ?? { selected: false, amount: "" };
     setPaymentDrafts((current) => ({
       ...current,
-      [saleId]: { ...previous, ...patch },
+      [saleId]: {
+        ...(current[saleId] ?? { selected: false, amount: "" }),
+        ...patch,
+      },
     }));
+  }
+
+  function toggleDraft(sale: PayableSale) {
+    if (editingPayment) return;
+
+    const draft = paymentDrafts[sale.id] ?? {
+      selected: false,
+      amount: sale.balance_amount,
+    };
+
+    updateDraft(sale.id, {
+      selected: !draft.selected,
+      amount: draft.amount || sale.balance_amount,
+    });
+  }
+
+  function startEditPayment(sale: PaidSale) {
+    if (!sale.payment_id) return;
+
+    setEditingPayment({
+      paymentId: sale.payment_id,
+      saleId: sale.id,
+      oldAmount: sale.payment_amount,
+      totalAmount: sale.total_amount,
+      paidAmount: sale.paid_amount,
+    });
+    setError("");
+    setMessage("");
+    setPaymentDateError("");
+    setSalesFieldError("");
+    setCkNumberError("");
+    setEditAmountError("");
+    setForm({
+      payment_date: sale.payment_date || today(),
+      payment_method: (sale.payment_method || "CASH") as PaymentMethod,
+      sales_person: sale.sales_person,
+      ck_number: sale.ck_number,
+      counter_date: sale.counter_date,
+      counter: sale.counter,
+      edit_amount: sale.payment_amount || "",
+    });
+    requestAnimationFrame(() => {
+      formPanelRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }
+
+  function cancelEditPayment() {
+    setEditingPayment(null);
+    setError("");
+    setMessage("");
+    setPaymentDateError("");
+    setSalesFieldError("");
+    setCkNumberError("");
+    setEditAmountError("");
+    setForm(emptyForm);
   }
 
   function buildRemarks() {
@@ -281,43 +389,103 @@ export function PaymentsPage() {
       return;
     }
 
-    if (
-      !form.payment_date ||
-      !form.payment_method ||
-      !form.sales_person.trim()
-    ) {
-      setError("Payment Date, Method, and Sales are required.");
-      return;
+    setError("");
+    setPaymentDateError("");
+    setSalesFieldError("");
+    setCkNumberError("");
+    setEditAmountError("");
+    setAmountErrors({});
+
+    let hasFieldError = false;
+
+    if (!form.payment_date) {
+      setPaymentDateError("Payment Date is required.");
+      hasFieldError = true;
+    }
+
+    if (!form.sales_person.trim()) {
+      setSalesFieldError("Sales is required.");
+      hasFieldError = true;
     }
 
     if (form.payment_method === "CK" && !form.ck_number.trim()) {
-      setError("CK No is required for CK payments.");
+      setCkNumberError("CK No is required.");
+      hasFieldError = true;
+    }
+
+    if (editingPayment && Number(form.edit_amount || 0) <= 0) {
+      setEditAmountError("Amount is required.");
+      hasFieldError = true;
+    }
+
+    if (hasFieldError) {
       return;
     }
 
-    if (selectedDrafts.length === 0) {
+    if (!editingPayment && selectedDrafts.length === 0) {
       setError("Select at least one OR to pay.");
       return;
     }
 
-    for (const { sale, draft } of selectedDrafts) {
-      const amount = Number(draft.amount || 0);
-      if (amount <= 0) {
-        setError(`OR ${sale.sale_or_number}: Amount must be greater than 0.`);
-        return;
+    const nextAmountErrors: Record<string, string> = {};
+    if (!editingPayment) {
+      for (const { sale, draft } of selectedDrafts) {
+        const amount = Number(draft.amount || 0);
+        if (amount <= 0) {
+          nextAmountErrors[sale.id] = "Amount is required.";
+        }
+        if (amount > sale.balance_amount) {
+          nextAmountErrors[sale.id] = "Cannot exceed balance.";
+        }
       }
-      if (amount > sale.balance_amount) {
-        setError(`OR ${sale.sale_or_number}: Amount cannot exceed balance.`);
-        return;
-      }
+    }
+
+    if (Object.keys(nextAmountErrors).length > 0) {
+      setAmountErrors(nextAmountErrors);
+      return;
     }
 
     setLoading(true);
     setError("");
+    setSalesFieldError("");
     setMessage("");
 
     try {
       const remarks = buildRemarks();
+      if (editingPayment) {
+        const amount = Number(form.edit_amount || 0);
+        const paymentRecord = {
+          payment_date: form.payment_date,
+          amount,
+          payment_method: form.payment_method,
+          reference_number:
+            form.payment_method === "CK" ? form.ck_number.trim() : null,
+          remarks,
+        };
+
+        const { error: updateError } = await supabase
+          .from("sales_payments")
+          .update(paymentRecord)
+          .eq("id", editingPayment.paymentId);
+        if (updateError) throw new Error(updateError.message);
+
+        const nextPaidAmount =
+          editingPayment.paidAmount - editingPayment.oldAmount + amount;
+        const status =
+          nextPaidAmount >= editingPayment.totalAmount ? "paid" : "deposit";
+        const { error: statusError } = await supabase
+          .from("sales_records")
+          .update({ payment_status: status })
+          .eq("id", editingPayment.saleId);
+        if (statusError) throw new Error(statusError.message);
+
+        setMessage("Payment updated.");
+        setEditingPayment(null);
+        setForm(emptyForm);
+        await loadRows();
+        return;
+      }
+
       const payload = selectedDrafts.map(({ sale, draft }) => ({
         sales_record_id: sale.id,
         payment_date: form.payment_date,
@@ -349,6 +517,12 @@ export function PaymentsPage() {
         `Saved ${payload.length} payment${payload.length === 1 ? "" : "s"}.`,
       );
       setForm(emptyForm);
+      setEditingPayment(null);
+      setPaymentDateError("");
+      setSalesFieldError("");
+      setCkNumberError("");
+      setEditAmountError("");
+      setAmountErrors({});
       await loadRows();
     } catch (saveError) {
       setError(
@@ -366,70 +540,85 @@ export function PaymentsPage() {
   }, []);
 
   return (
-    <Stack gap="md">
-      <Paper withBorder radius="sm" p="md" className="masterPanel">
+    <Stack gap='md'>
+      <Paper
+        ref={formPanelRef}
+        withBorder
+        radius='sm'
+        p='md'
+        className='masterPanel'
+      >
         <form
           onSubmit={(event) => {
             event.preventDefault();
             void savePayments();
           }}
         >
-          <Stack gap="md">
+          <Stack gap='md'>
             <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
               <Select
-                label="Payment Method"
+                label='Payment Method'
+                checkIconPosition='right'
                 data={paymentMethods}
                 value={form.payment_method}
                 allowDeselect={false}
-                onChange={(value) =>
+                onChange={(value) => {
+                  setCkNumberError("");
                   setForm((current) => ({
                     ...current,
                     payment_method: (value ?? "CASH") as PaymentMethod,
                     ck_number: value === "CK" ? current.ck_number : "",
                     counter_date: value === "CK" ? current.counter_date : "",
                     counter: value === "DEPOSIT" ? current.counter : "",
-                  }))
-                }
+                  }));
+                }}
               />
               <TextInput
-                label="Payment Date"
-                type="date"
+                label='Payment Date'
+                type='date'
                 value={form.payment_date}
-                onChange={(event) =>
+                error={paymentDateError}
+                onChange={(event) => {
+                  setPaymentDateError("");
                   setForm((current) => ({
                     ...current,
                     payment_date: event.currentTarget.value,
-                  }))
-                }
+                  }));
+                }}
               />
               <SuggestionTextInput
-                label="Sales"
+                label='Sales'
                 value={form.sales_person}
+                error={salesFieldError}
                 suggestions={salesPeople.map((person) => person.label)}
-                onValueChange={(value) =>
-                  setForm((current) => ({ ...current, sales_person: value }))
-                }
-                onCommit={(value) =>
-                  setForm((current) => ({ ...current, sales_person: value }))
-                }
+                onValueChange={(value) => {
+                  setSalesFieldError("");
+                  setForm((current) => ({ ...current, sales_person: value }));
+                }}
+                onCommit={(value) => {
+                  setSalesFieldError("");
+                  setForm((current) => ({ ...current, sales_person: value }));
+                }}
                 submitOnEnter={() => setTimeout(() => void savePayments(), 0)}
               />
               {form.payment_method === "CK" && (
                 <TextInput
-                  label="CK No"
+                  label='CK No'
                   value={form.ck_number}
-                  onChange={(event) =>
+                  error={ckNumberError}
+                  onChange={(event) => {
+                    setCkNumberError("");
                     setForm((current) => ({
                       ...current,
                       ck_number: event.currentTarget.value,
-                    }))
-                  }
+                    }));
+                  }}
                 />
               )}
               {form.payment_method === "CK" && (
                 <TextInput
-                  label="Counter Date"
-                  type="date"
+                  label='Counter Date'
+                  type='date'
                   value={form.counter_date}
                   onChange={(event) =>
                     setForm((current) => ({
@@ -441,7 +630,7 @@ export function PaymentsPage() {
               )}
               {form.payment_method === "DEPOSIT" && (
                 <TextInput
-                  label="Counter"
+                  label='Counter'
                   value={form.counter}
                   onChange={(event) =>
                     setForm((current) => ({
@@ -451,44 +640,86 @@ export function PaymentsPage() {
                   }
                 />
               )}
+              {editingPayment && (
+                <NumberInput
+                  label='Amount'
+                  min={0}
+                  value={form.edit_amount}
+                  error={editAmountError}
+                  onChange={(value) => {
+                    setEditAmountError("");
+                    setForm((current) => ({
+                      ...current,
+                      edit_amount: Number(value) || "",
+                    }));
+                  }}
+                />
+              )}
             </SimpleGrid>
 
-            <Group justify="space-between">
+            <Group justify='space-between'>
               <Group>
                 <Button
                   leftSection={<Save size={16} />}
-                  type="submit"
+                  type='submit'
                   loading={loading}
                 >
-                  Save Payments
+                  {editingPayment ? "Save Changes" : "Save Payments"}
                 </Button>
+                {editingPayment && (
+                  <Button
+                    type='button'
+                    variant='light'
+                    color='gray'
+                    onClick={cancelEditPayment}
+                    disabled={loading}
+                  >
+                    Cancel
+                  </Button>
+                )}
                 <Button
-                  type="button"
+                  type='button'
                   leftSection={<RefreshCw size={16} />}
-                  variant="light"
+                  variant='light'
                   onClick={loadRows}
                   loading={loading}
                 >
                   Refresh
                 </Button>
               </Group>
-              <Badge variant="light">
-                Selected: {selectedDrafts.length} | Amount:{" "}
-                {money(selectedTotal)}
+              <Badge variant='light'>
+                {editingPayment
+                  ? "Editing payment"
+                  : `Selected: ${selectedDrafts.length} | Amount: ${displayMoney(selectedTotal)}`}
               </Badge>
             </Group>
           </Stack>
         </form>
       </Paper>
 
-      <Paper withBorder radius="sm" p="md" className="masterPanel">
-        <Stack gap="sm">
-          <Group justify="space-between">
-            <Badge variant="outline">Payable Sales</Badge>
-            <Badge variant="light">{payableSales.length} open ORs</Badge>
+      <Paper
+        withBorder
+        radius='sm'
+        p='md'
+        className='masterPanel'
+      >
+        <Stack gap='sm'>
+          <Group justify='space-between'>
+            <Badge variant='outline'>Unpaid Sales</Badge>
+            <Badge variant='light'>
+              {filteredPayableSales.length} of {payableSales.length} open ORs
+            </Badge>
           </Group>
-          <ScrollArea type="auto">
-            <Table miw={980} verticalSpacing="xs">
+          <TextInput
+            placeholder='Search any unpaid sale'
+            value={unpaidSearch}
+            onChange={(event) => setUnpaidSearch(event.currentTarget.value)}
+          />
+          <ScrollArea type='auto'>
+            <Table
+              miw={980}
+              verticalSpacing='xs'
+            >
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>Pay</Table.Th>
@@ -502,17 +733,22 @@ export function PaymentsPage() {
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {payableSales.map((sale) => {
+                {filteredPayableSales.map((sale) => {
                   const draft = paymentDrafts[sale.id] ?? {
                     selected: false,
                     amount: sale.balance_amount,
                   };
 
                   return (
-                    <Table.Tr key={sale.id}>
+                    <Table.Tr
+                      key={sale.id}
+                      onClick={() => toggleDraft(sale)}
+                      style={{ cursor: "pointer" }}
+                    >
                       <Table.Td>
                         <Checkbox
                           checked={draft.selected}
+                          onClick={(event) => event.stopPropagation()}
                           onChange={(event) =>
                             updateDraft(sale.id, {
                               selected: event.currentTarget.checked,
@@ -523,30 +759,121 @@ export function PaymentsPage() {
                       <Table.Td>OR {sale.sale_or_number}</Table.Td>
                       <Table.Td>{sale.sale_date}</Table.Td>
                       <Table.Td>{sale.customer_name}</Table.Td>
-                      <Table.Td>{money(sale.total_amount)}</Table.Td>
-                      <Table.Td>{money(sale.paid_amount)}</Table.Td>
-                      <Table.Td>{money(sale.balance_amount)}</Table.Td>
-                      <Table.Td>
+                      <Table.Td>{displayMoney(sale.total_amount)}</Table.Td>
+                      <Table.Td>{displayMoney(sale.paid_amount)}</Table.Td>
+                      <Table.Td>{displayMoney(sale.balance_amount)}</Table.Td>
+                      <Table.Td onClick={(event) => event.stopPropagation()}>
                         <NumberInput
                           w={140}
                           min={0}
                           max={sale.balance_amount}
                           value={draft.amount}
-                          onChange={(value) =>
+                          onChange={(value) => {
+                            setAmountErrors((current) => {
+                              const { [sale.id]: _removed, ...rest } = current;
+                              return rest;
+                            });
                             updateDraft(sale.id, {
                               amount: Number(value) || "",
                               selected:
                                 draft.selected || Number(value || 0) > 0,
-                            })
-                          }
+                            });
+                          }}
+                          error={amountErrors[sale.id]}
                         />
                       </Table.Td>
                     </Table.Tr>
                   );
                 })}
-                {!payableSales.length && (
+                {!filteredPayableSales.length && (
                   <Table.Tr>
-                    <Table.Td colSpan={8}>No payable sales to display</Table.Td>
+                    <Table.Td colSpan={8}>No unpaid sales to display</Table.Td>
+                  </Table.Tr>
+                )}
+              </Table.Tbody>
+            </Table>
+          </ScrollArea>
+        </Stack>
+      </Paper>
+
+      <Paper
+        withBorder
+        radius='sm'
+        p='md'
+        className='masterPanel'
+      >
+        <Stack gap='sm'>
+          <Group justify='space-between'>
+            <Badge variant='outline'>Paid Sales</Badge>
+            <Badge variant='light'>
+              {filteredPaidSales.length} of {paidSales.length} paid ORs
+            </Badge>
+          </Group>
+          <TextInput
+            placeholder='Search any paid sale'
+            value={paidSearch}
+            onChange={(event) => setPaidSearch(event.currentTarget.value)}
+          />
+          <ScrollArea type='auto'>
+            <Table
+              withColumnBorders
+              miw={1320}
+              verticalSpacing='xs'
+            >
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>OR</Table.Th>
+                  <Table.Th>Date</Table.Th>
+                  <Table.Th>Client</Table.Th>
+                  <Table.Th>Total</Table.Th>
+                  <Table.Th>Paid</Table.Th>
+                  <Table.Th>Balance</Table.Th>
+                  <Table.Th>Payment Date</Table.Th>
+                  <Table.Th>Amount</Table.Th>
+                  <Table.Th>Method</Table.Th>
+                  <Table.Th>CK No</Table.Th>
+                  <Table.Th>Counter Date</Table.Th>
+                  <Table.Th>Counter</Table.Th>
+                  <Table.Th>Sales</Table.Th>
+                  <Table.Th>Actions</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {filteredPaidSales.map((sale) => (
+                  <Table.Tr key={sale.id}>
+                    <Table.Td>OR {sale.sale_or_number}</Table.Td>
+                    <Table.Td>{sale.sale_date}</Table.Td>
+                    <Table.Td>{sale.customer_name}</Table.Td>
+                    <Table.Td>{displayMoney(sale.total_amount)}</Table.Td>
+                    <Table.Td>{displayMoney(sale.paid_amount)}</Table.Td>
+                    <Table.Td>{displayMoney(sale.balance_amount)}</Table.Td>
+                    <Table.Td>{sale.payment_date}</Table.Td>
+                    <Table.Td>
+                      {sale.payment_amount
+                        ? displayMoney(sale.payment_amount)
+                        : ""}
+                    </Table.Td>
+                    <Table.Td>{sale.payment_method}</Table.Td>
+                    <Table.Td>{sale.ck_number}</Table.Td>
+                    <Table.Td>{sale.counter_date}</Table.Td>
+                    <Table.Td>{sale.counter}</Table.Td>
+                    <Table.Td>{sale.sales_person}</Table.Td>
+                    <Table.Td>
+                      <Button
+                        size='xs'
+                        variant='subtle'
+                        leftSection={<Edit3 size={14} />}
+                        onClick={() => startEditPayment(sale)}
+                        disabled={!sale.payment_id}
+                      >
+                        Edit
+                      </Button>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+                {!filteredPaidSales.length && (
+                  <Table.Tr>
+                    <Table.Td colSpan={14}>No paid sales to display</Table.Td>
                   </Table.Tr>
                 )}
               </Table.Tbody>
@@ -558,8 +885,8 @@ export function PaymentsPage() {
       {!isSupabaseConfigured && (
         <Alert
           icon={<AlertCircle size={16} />}
-          color="yellow"
-          title="Supabase is not configured"
+          color='yellow'
+          title='Supabase is not configured'
         >
           Supabase credentials are missing from .env.
         </Alert>
@@ -568,16 +895,14 @@ export function PaymentsPage() {
       {error && (
         <Alert
           icon={<AlertCircle size={16} />}
-          color="red"
-          title="Database error"
+          color='red'
+          title='Database error'
         >
           {error}
         </Alert>
       )}
 
-      {message && <Alert color="green">{message}</Alert>}
-
-      <CustomExcelTable columns={paymentColumns} data={rows} />
+      {message && <Alert color='green'>{message}</Alert>}
     </Stack>
   );
 }

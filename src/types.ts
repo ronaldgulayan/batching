@@ -6,6 +6,7 @@ export type Option = {
 };
 
 export type ModuleKey =
+  | 'dashboard'
   | 'customers'
   | 'sales'
   | 'payments'
