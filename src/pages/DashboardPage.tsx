@@ -105,6 +105,12 @@ type LeaderItem = {
   count: number;
 };
 
+type UnpaidSummaryItem = {
+  customer: string;
+  unpaidAmount: number;
+  records: number;
+};
+
 function buildLeaders(
   rows: SalesSummaryRecord[],
   getLabel: (row: SalesSummaryRecord) => string,
@@ -136,6 +142,28 @@ function sumByMethod(payments: PaymentRecord[]) {
   return Array.from(map.entries())
     .map(([method, amount]) => ({ method, amount }))
     .sort((first, second) => second.amount - first.amount);
+}
+
+function buildUnpaidSummary(rows: SalesSummaryRecord[]) {
+  const map = new Map<string, UnpaidSummaryItem>();
+
+  for (const row of rows) {
+    const unpaidAmount = Number(row.balance_amount || 0);
+    if (unpaidAmount <= 0) continue;
+
+    const customer = row.customer_name || "Unspecified";
+    const item = map.get(customer) ?? { customer, unpaidAmount: 0, records: 0 };
+    item.unpaidAmount += unpaidAmount;
+    item.records += 1;
+    map.set(customer, item);
+  }
+
+  return Array.from(map.values()).sort((first, second) => {
+    if (second.unpaidAmount !== first.unpaidAmount) {
+      return second.unpaidAmount - first.unpaidAmount;
+    }
+    return first.customer.localeCompare(second.customer);
+  });
 }
 
 export function DashboardPage() {
@@ -233,6 +261,7 @@ export function DashboardPage() {
       topClients: buildLeaders(filteredSales, (row) => row.customer_name ?? ""),
       topDesigns: buildLeaders(filteredSales, (row) => row.concrete_design ?? ""),
       methods: sumByMethod(filteredPayments),
+      unpaidSummary: buildUnpaidSummary(filteredSales),
     };
   }, [filteredPayments, filteredSales]);
 
@@ -523,6 +552,50 @@ export function DashboardPage() {
           </Stack>
         </Paper>
       </SimpleGrid>
+
+      <Paper
+        withBorder
+        radius='sm'
+        p='md'
+        className='masterPanel'
+      >
+        <Stack gap='sm'>
+          <Group justify='space-between'>
+            <div>
+              <Text fw={700}>Unpaid Summary</Text>
+              <Text c='dimmed' size='sm'>
+                Customer balances for {periodLabel(periodMode, filters)}
+              </Text>
+            </div>
+            <Badge variant='light'>{displayMoney(report.unpaidAmount)}</Badge>
+          </Group>
+          <ScrollArea type='auto'>
+            <Table withColumnBorders>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Customer Name</Table.Th>
+                  <Table.Th>Unpaid Amount</Table.Th>
+                  <Table.Th>Records</Table.Th>
+                </Table.Tr>
+              </Table.Thead>
+              <Table.Tbody>
+                {report.unpaidSummary.map((customer) => (
+                  <Table.Tr key={customer.customer}>
+                    <Table.Td>{customer.customer}</Table.Td>
+                    <Table.Td>{displayMoney(customer.unpaidAmount)}</Table.Td>
+                    <Table.Td>{customer.records}</Table.Td>
+                  </Table.Tr>
+                ))}
+                {!report.unpaidSummary.length && (
+                  <Table.Tr>
+                    <Table.Td colSpan={3}>No unpaid balances to display</Table.Td>
+                  </Table.Tr>
+                )}
+              </Table.Tbody>
+            </Table>
+          </ScrollArea>
+        </Stack>
+      </Paper>
     </Stack>
   );
 }
