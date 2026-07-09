@@ -63,6 +63,23 @@ export function MaintenanceLookupPage({ table, orderBy, fields, columns, uniqueK
     setError('');
     setMessage('');
 
+    if (uniqueKey) {
+      const value = String(form[uniqueKey] ?? '').trim().toLowerCase();
+      const fieldLabel = fields.find((f) => f.key === uniqueKey)?.label || uniqueKey;
+
+      const duplicateExists = rows.some((row) => {
+        if (editingId && row.id === editingId) return false;
+        const rowValue = String(row[uniqueKey] ?? '').trim().toLowerCase();
+        return rowValue === value;
+      });
+
+      if (duplicateExists) {
+        setError(`${fieldLabel} "${String(form[uniqueKey] ?? '').trim()}" already exists.`);
+        setLoading(false);
+        return;
+      }
+    }
+
     const record = Object.fromEntries(
       fields.map((field) => {
         const value = form[field.key];

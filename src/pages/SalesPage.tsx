@@ -465,9 +465,9 @@ export function SalesPage() {
       unit_price: row.unit_price,
     });
     requestAnimationFrame(() => {
-      formPanelRef.current?.scrollIntoView({
+      window.scrollTo({
+        top: 0,
         behavior: "smooth",
-        block: "start",
       });
     });
   }
@@ -652,7 +652,7 @@ export function SalesPage() {
 
   return (
     <Stack gap="md">
-      <Paper withBorder radius="sm" p="md" className="masterPanel">
+      <Paper ref={formPanelRef} withBorder radius="sm" p="md" className="masterPanel">
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -1002,7 +1002,6 @@ export function SalesPage() {
       {message && <Alert color="green">{message}</Alert>}
 
       <Paper
-        ref={formPanelRef}
         withBorder
         radius="sm"
         p="md"

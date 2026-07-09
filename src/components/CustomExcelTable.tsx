@@ -68,6 +68,7 @@ export function CustomExcelTable<T extends { id: string | number }>({
   >(null);
   const isDraggingRef = useRef(false);
   const didDragRef = useRef(false);
+  const gridContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setRows(data);
@@ -341,6 +342,70 @@ export function CustomExcelTable<T extends { id: string | number }>({
     });
   }
 
+  function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    const isCopy = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c";
+    if (isCopy) {
+      // Find the range of selected cells
+      let minRow = -1;
+      let maxRow = -1;
+      let minCol = -1;
+      let maxCol = -1;
+
+      // Find bounding box
+      for (let r = 0; r < rows.length; r++) {
+        const row = rows[r];
+        for (let c = 0; c < columns.length; c++) {
+          const col = columns[c];
+          if (isCellSelected(row, col)) {
+            if (minRow === -1 || r < minRow) minRow = r;
+            if (r > maxRow) maxRow = r;
+            if (minCol === -1 || c < minCol) minCol = c;
+            if (c > maxCol) maxCol = c;
+          }
+        }
+      }
+
+      if (minRow === -1) {
+        // Nothing is selected, copy activeCell if it exists
+        if (activeCell) {
+          const row = rows[activeCell.row];
+          const col = columns[activeCell.col];
+          if (row && col) {
+            const val = String(row[col.key] ?? "");
+            navigator.clipboard.writeText(val).catch(() => {});
+          }
+        }
+        event.preventDefault();
+        return;
+      }
+
+      // Build tab and newline separated string
+      const lines: string[] = [];
+      for (let r = minRow; r <= maxRow; r++) {
+        const row = rows[r];
+        if (!row) continue;
+        const lineCells: string[] = [];
+        for (let c = minCol; c <= maxCol; c++) {
+          const col = columns[c];
+          if (!col) continue;
+          if (isCellSelected(row, col)) {
+            lineCells.push(String(row[col.key] ?? ""));
+          } else {
+            lineCells.push("");
+          }
+        }
+        lines.push(lineCells.join("\t"));
+      }
+
+      const textToCopy = lines.join("\n");
+      navigator.clipboard.writeText(textToCopy).catch((err) => {
+        console.error("Failed to copy text: ", err);
+      });
+
+      event.preventDefault();
+    }
+  }
+
   return (
     <div className='excel-container'>
       <ScrollArea
@@ -348,8 +413,10 @@ export function CustomExcelTable<T extends { id: string | number }>({
         type='auto'
       >
         <div
+          ref={gridContainerRef}
           className='excel-grid-container'
           tabIndex={0}
+          onKeyDown={handleKeyDown}
         >
           <table className='excel-grid-table'>
             <thead>
@@ -360,6 +427,7 @@ export function CustomExcelTable<T extends { id: string | number }>({
                     setSelectedRowIds(new Set());
                     setSelectedColumnKeys(new Set());
                     setSelectedCellKeys(new Set());
+                    gridContainerRef.current?.focus();
                   }}
                   title='Clear selection'
                 />
@@ -381,6 +449,7 @@ export function CustomExcelTable<T extends { id: string | number }>({
                       if (event.button !== 0) return;
                       event.preventDefault();
                       startColumnSelection(colIndex);
+                      gridContainerRef.current?.focus();
                     }}
                     onMouseEnter={() => extendColumnSelection(colIndex)}
                   >
@@ -438,6 +507,7 @@ export function CustomExcelTable<T extends { id: string | number }>({
                         event.preventDefault();
                         event.stopPropagation();
                         startRowSelection(rowIndex);
+                        gridContainerRef.current?.focus();
                       }}
                       onMouseEnter={() => extendRowSelection(rowIndex)}
                     >
@@ -469,6 +539,7 @@ export function CustomExcelTable<T extends { id: string | number }>({
                             event.preventDefault();
                             setActiveCell({ row: rowIndex, col: colIndex });
                             startCellSelection(rowIndex, colIndex);
+                            gridContainerRef.current?.focus();
                           }}
                           onMouseEnter={() => extendCellSelection(rowIndex, colIndex)}
                         >

@@ -354,9 +354,9 @@ export function PaymentsPage() {
       edit_amount: sale.payment_amount || "",
     });
     requestAnimationFrame(() => {
-      formPanelRef.current?.scrollIntoView({
+      window.scrollTo({
+        top: 0,
         behavior: "smooth",
-        block: "start",
       });
     });
   }
