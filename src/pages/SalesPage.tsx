@@ -1023,6 +1023,7 @@ export function SalesPage() {
       <CustomExcelTable
         columns={saleColumns}
         data={filteredRows}
+        onEditClick={(row) => startEditSale(row)}
         renderRowActions={(row) => (
           <Button
             size="xs"

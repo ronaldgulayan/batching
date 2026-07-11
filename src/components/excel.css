@@ -35,11 +35,15 @@
 }
 
 /* Header and Cell structure */
+.excel-grid-table tr {
+  height: 34px;
+}
+
 .excel-grid-table th,
 .excel-grid-table td {
   border: 1px solid var(--app-border);
   padding: 0;
-  height: 34px;
+  height: inherit;
   position: relative;
   box-sizing: border-box;
 }
@@ -374,6 +378,13 @@ input[type="number"] {
   transition: background-color 0.1s ease;
   user-select: none;
   font-weight: 500;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
 }
 
 .excel-context-menu-item:hover {
@@ -503,4 +514,11 @@ input[type="number"] {
 .excel-status-divider {
   color: var(--app-border);
   user-select: none;
+}
+
+/* Checkbox cursor pointer */
+.excel-grid-table input[type="checkbox"],
+.excel-grid-table label,
+.excel-grid-table .mantine-Checkbox-input {
+  cursor: pointer !important;
 }

@@ -192,6 +192,7 @@ export function MaintenanceLookupPage({ table, orderBy, fields, columns, uniqueK
       <CustomExcelTable
         columns={columns}
         data={rows}
+        onEditClick={(row) => startEdit(row)}
         renderRowActions={(row) => (
           <Button size="xs" variant="subtle" leftSection={<Edit3 size={14} />} onClick={() => startEdit(row)}>
             Edit

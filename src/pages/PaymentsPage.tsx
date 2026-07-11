@@ -17,6 +17,7 @@ import {
 import { AlertCircle, Edit3, RefreshCw, Save } from "lucide-react";
 import { SuggestionTextInput } from "../components/SuggestionTextInput";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
+import { CustomExcelTable, type ExcelColumn } from "../components/CustomExcelTable";
 
 type PaymentMethod = "CASH" | "CK" | "ONLINE" | "DEPOSIT";
 
@@ -192,6 +193,108 @@ export function PaymentsPage() {
     () => paidSales.filter((sale) => saleMatchesSearch(sale, paidSearch)),
     [paidSales, paidSearch],
   );
+
+  const unpaidColumns = useMemo<ExcelColumn<PayableSale>[]>(
+    () => [
+      { key: "sale_or_number", label: "OR", type: "number" },
+      { key: "sale_date", label: "Date", type: "date" },
+      { key: "customer_name", label: "Client", type: "text" },
+      { key: "total_amount", label: "Total", type: "number" },
+      { key: "paid_amount", label: "Paid", type: "number" },
+      { key: "balance_amount", label: "Balance", type: "number" },
+      { key: "amount" as any, label: "Amount", type: "number" },
+    ],
+    [],
+  );
+
+  const selectedUnpaidRowIds = useMemo(() => {
+    const ids = new Set<string | number>();
+    for (const [id, draft] of Object.entries(paymentDrafts)) {
+      if (draft.selected) {
+        ids.add(id);
+      }
+    }
+    return ids;
+  }, [paymentDrafts]);
+
+  const handleUnpaidSelectionChange = (newSelectedIds: Set<string | number>) => {
+    setPaymentDrafts((current) => {
+      const next = { ...current };
+      payableSales.forEach((sale) => {
+        const isSelected = newSelectedIds.has(sale.id);
+        next[sale.id] = {
+          ...(next[sale.id] ?? { amount: sale.balance_amount }),
+          selected: isSelected,
+        };
+      });
+      return next;
+    });
+  };
+
+  const renderUnpaidCell = (row: PayableSale, column: ExcelColumn<PayableSale>) => {
+    if (column.key === "sale_or_number") {
+      return `OR ${row.sale_or_number}`;
+    }
+    if ((column.key as string) === "amount") {
+      const draft = paymentDrafts[row.id] ?? {
+        selected: false,
+        amount: row.balance_amount,
+      };
+      return (
+        <div onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
+          <NumberInput
+            w={140}
+            min={0}
+            max={row.balance_amount}
+            value={draft.amount}
+            onChange={(value) => {
+              setAmountErrors((current) => {
+                const { [row.id]: _removed, ...rest } = current;
+                return rest;
+              });
+              updateDraft(row.id, {
+                amount: Number(value) || "",
+                selected: draft.selected || Number(value || 0) > 0,
+              });
+            }}
+            error={amountErrors[row.id]}
+            size="xs"
+          />
+        </div>
+      );
+    }
+    return undefined;
+  };
+
+  const paidColumns = useMemo<ExcelColumn<PaidSale>[]>(
+    () => [
+      { key: "sale_or_number", label: "OR", type: "number" },
+      { key: "sale_date", label: "Date", type: "date" },
+      { key: "customer_name", label: "Client", type: "text" },
+      { key: "total_amount", label: "Total", type: "number" },
+      { key: "paid_amount", label: "Paid", type: "number" },
+      { key: "balance_amount", label: "Balance", type: "number" },
+      { key: "payment_date", label: "Payment Date", type: "date" },
+      { key: "payment_amount", label: "Amount", type: "number" },
+      { key: "payment_method", label: "Method", type: "text" },
+      { key: "ck_number", label: "CK No", type: "text" },
+      { key: "counter_date", label: "Counter Date", type: "date" },
+      { key: "counter", label: "Counter", type: "text" },
+      { key: "sales_person", label: "Sales", type: "text" },
+    ],
+    [],
+  );
+
+  const renderPaidCell = (row: PaidSale, column: ExcelColumn<PaidSale>) => {
+    if (column.key === "sale_or_number") {
+      return `OR ${row.sale_or_number}`;
+    }
+    if (column.key === "payment_amount") {
+      return row.payment_amount ? displayMoney(row.payment_amount) : "";
+    }
+    return undefined;
+  };
+
 
   async function loadRows() {
     if (!isSupabaseConfigured) return;
@@ -715,84 +818,15 @@ export function PaymentsPage() {
             value={unpaidSearch}
             onChange={(event) => setUnpaidSearch(event.currentTarget.value)}
           />
-          <ScrollArea type='auto'>
-            <Table
-              miw={980}
-              verticalSpacing='xs'
-            >
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>Pay</Table.Th>
-                  <Table.Th>OR</Table.Th>
-                  <Table.Th>Date</Table.Th>
-                  <Table.Th>Client</Table.Th>
-                  <Table.Th>Total</Table.Th>
-                  <Table.Th>Paid</Table.Th>
-                  <Table.Th>Balance</Table.Th>
-                  <Table.Th>Amount</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {filteredPayableSales.map((sale) => {
-                  const draft = paymentDrafts[sale.id] ?? {
-                    selected: false,
-                    amount: sale.balance_amount,
-                  };
-
-                  return (
-                    <Table.Tr
-                      key={sale.id}
-                      onClick={() => toggleDraft(sale)}
-                      style={{ cursor: "pointer" }}
-                    >
-                      <Table.Td>
-                        <Checkbox
-                          checked={draft.selected}
-                          onClick={(event) => event.stopPropagation()}
-                          onChange={(event) =>
-                            updateDraft(sale.id, {
-                              selected: event.currentTarget.checked,
-                            })
-                          }
-                        />
-                      </Table.Td>
-                      <Table.Td>OR {sale.sale_or_number}</Table.Td>
-                      <Table.Td>{sale.sale_date}</Table.Td>
-                      <Table.Td>{sale.customer_name}</Table.Td>
-                      <Table.Td>{displayMoney(sale.total_amount)}</Table.Td>
-                      <Table.Td>{displayMoney(sale.paid_amount)}</Table.Td>
-                      <Table.Td>{displayMoney(sale.balance_amount)}</Table.Td>
-                      <Table.Td onClick={(event) => event.stopPropagation()}>
-                        <NumberInput
-                          w={140}
-                          min={0}
-                          max={sale.balance_amount}
-                          value={draft.amount}
-                          onChange={(value) => {
-                            setAmountErrors((current) => {
-                              const { [sale.id]: _removed, ...rest } = current;
-                              return rest;
-                            });
-                            updateDraft(sale.id, {
-                              amount: Number(value) || "",
-                              selected:
-                                draft.selected || Number(value || 0) > 0,
-                            });
-                          }}
-                          error={amountErrors[sale.id]}
-                        />
-                      </Table.Td>
-                    </Table.Tr>
-                  );
-                })}
-                {!filteredPayableSales.length && (
-                  <Table.Tr>
-                    <Table.Td colSpan={8}>No unpaid sales to display</Table.Td>
-                  </Table.Tr>
-                )}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea>
+          <CustomExcelTable
+            columns={unpaidColumns}
+            data={filteredPayableSales}
+            withSelection={true}
+            checkedRowIds={selectedUnpaidRowIds}
+            onCheckedRowIdsChange={handleUnpaidSelectionChange}
+            renderCell={renderUnpaidCell}
+            contextMenuItems={[]}
+          />
         </Stack>
       </Paper>
 
@@ -814,71 +848,27 @@ export function PaymentsPage() {
             value={paidSearch}
             onChange={(event) => setPaidSearch(event.currentTarget.value)}
           />
-          <ScrollArea type='auto'>
-            <Table
-              withColumnBorders
-              miw={1320}
-              verticalSpacing='xs'
-            >
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>OR</Table.Th>
-                  <Table.Th>Date</Table.Th>
-                  <Table.Th>Client</Table.Th>
-                  <Table.Th>Total</Table.Th>
-                  <Table.Th>Paid</Table.Th>
-                  <Table.Th>Balance</Table.Th>
-                  <Table.Th>Payment Date</Table.Th>
-                  <Table.Th>Amount</Table.Th>
-                  <Table.Th>Method</Table.Th>
-                  <Table.Th>CK No</Table.Th>
-                  <Table.Th>Counter Date</Table.Th>
-                  <Table.Th>Counter</Table.Th>
-                  <Table.Th>Sales</Table.Th>
-                  <Table.Th>Actions</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {filteredPaidSales.map((sale) => (
-                  <Table.Tr key={sale.id}>
-                    <Table.Td>OR {sale.sale_or_number}</Table.Td>
-                    <Table.Td>{sale.sale_date}</Table.Td>
-                    <Table.Td>{sale.customer_name}</Table.Td>
-                    <Table.Td>{displayMoney(sale.total_amount)}</Table.Td>
-                    <Table.Td>{displayMoney(sale.paid_amount)}</Table.Td>
-                    <Table.Td>{displayMoney(sale.balance_amount)}</Table.Td>
-                    <Table.Td>{sale.payment_date}</Table.Td>
-                    <Table.Td>
-                      {sale.payment_amount
-                        ? displayMoney(sale.payment_amount)
-                        : ""}
-                    </Table.Td>
-                    <Table.Td>{sale.payment_method}</Table.Td>
-                    <Table.Td>{sale.ck_number}</Table.Td>
-                    <Table.Td>{sale.counter_date}</Table.Td>
-                    <Table.Td>{sale.counter}</Table.Td>
-                    <Table.Td>{sale.sales_person}</Table.Td>
-                    <Table.Td>
-                      <Button
-                        size='xs'
-                        variant='subtle'
-                        leftSection={<Edit3 size={14} />}
-                        onClick={() => startEditPayment(sale)}
-                        disabled={!sale.payment_id}
-                      >
-                        Edit
-                      </Button>
-                    </Table.Td>
-                  </Table.Tr>
-                ))}
-                {!filteredPaidSales.length && (
-                  <Table.Tr>
-                    <Table.Td colSpan={14}>No paid sales to display</Table.Td>
-                  </Table.Tr>
-                )}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea>
+          <CustomExcelTable
+            columns={paidColumns}
+            data={filteredPaidSales}
+            renderCell={renderPaidCell}
+            onEditClick={(row) => {
+              if (row.payment_id) {
+                startEditPayment(row);
+              }
+            }}
+            renderRowActions={(row) => (
+              <Button
+                size='xs'
+                variant='subtle'
+                leftSection={<Edit3 size={14} />}
+                onClick={() => startEditPayment(row)}
+                disabled={!row.payment_id}
+              >
+                Edit
+              </Button>
+            )}
+          />
         </Stack>
       </Paper>
 

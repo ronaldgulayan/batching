@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { ScrollArea } from "@mantine/core";
+import { ScrollArea, Modal, Table, Button, Checkbox } from "@mantine/core";
+import { Edit3, Trash2, Eye, Copy } from "lucide-react";
 import "./excel.css";
 
 type CellType = "text" | "number" | "date" | "autocomplete";
@@ -25,6 +26,14 @@ type Props<T extends { id: string | number }> = {
   getRowStyle?: (row: T, rowIndex: number) => React.CSSProperties;
   page?: number;
   onPageChange?: (page: number) => void;
+  withSelection?: boolean;
+  selectedRowIds?: Set<string | number>;
+  onSelectionChange?: (selectedIds: Set<string | number>) => void;
+  checkedRowIds?: Set<string | number>;
+  onCheckedRowIdsChange?: (checkedIds: Set<string | number>) => void;
+  contextMenuItems?: readonly ("delete" | "edit" | "details" | "copy")[];
+  onEditClick?: (row: T, rowIndex: number) => void;
+  onDeleteClick?: (row: T, rowIndex: number) => void;
 };
 
 export function CustomExcelTable<T extends { id: string | number }>({
@@ -39,19 +48,161 @@ export function CustomExcelTable<T extends { id: string | number }>({
   getRowStyle,
   page,
   onPageChange,
+  withSelection = false,
+  selectedRowIds: selectedRowIdsProp,
+  onSelectionChange,
+  checkedRowIds: checkedRowIdsProp,
+  onCheckedRowIdsChange,
+  contextMenuItems: contextMenuItemsProp,
+  onEditClick,
+  onDeleteClick,
 }: Props<T>) {
   const [rows, setRows] = useState<T[]>(data);
   const [activeCell, setActiveCell] = useState<{
     row: number;
     col: number;
   } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    row: T;
+    col?: ExcelColumn<T>;
+    rowIndex: number;
+    colIndex: number;
+  } | null>(null);
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [selectedRowForDetails, setSelectedRowForDetails] = useState<T | null>(null);
   const [sortConfig, setSortConfig] = useState<{
     key: keyof T & string;
     direction: "asc" | "desc";
   } | null>(null);
-  const [selectedRowIds, setSelectedRowIds] = useState<Set<string | number>>(
+
+  const [internalSelectedRowIds, setInternalSelectedRowIds] = useState<Set<string | number>>(
     () => new Set(),
   );
+
+  const selectedRowIds = selectedRowIdsProp ?? internalSelectedRowIds;
+
+  const setSelectedRowIds = (
+    next: Set<string | number> | ((current: Set<string | number>) => Set<string | number>),
+  ) => {
+    let nextVal: Set<string | number>;
+    if (typeof next === "function") {
+      nextVal = next(selectedRowIds);
+    } else {
+      nextVal = next;
+    }
+    if (!selectedRowIdsProp) {
+      setInternalSelectedRowIds(nextVal);
+    }
+    onSelectionChange?.(nextVal);
+  };
+
+  const [internalCheckedRowIds, setInternalCheckedRowIds] = useState<Set<string | number>>(
+    () => new Set(),
+  );
+
+  const checkedRowIds = checkedRowIdsProp ?? internalCheckedRowIds;
+
+  const setCheckedRowIds = (
+    next: Set<string | number> | ((current: Set<string | number>) => Set<string | number>),
+  ) => {
+    let nextVal: Set<string | number>;
+    if (typeof next === "function") {
+      nextVal = next(checkedRowIds);
+    } else {
+      nextVal = next;
+    }
+    if (!checkedRowIdsProp) {
+      setInternalCheckedRowIds(nextVal);
+    }
+    onCheckedRowIdsChange?.(nextVal);
+  };
+
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const [rowHeights, setRowHeights] = useState<Record<string | number, number>>({});
+
+  const activeItems = useMemo(() => {
+    if (contextMenuItemsProp && contextMenuItemsProp.length === 0) {
+      return [];
+    }
+    const items = new Set<"edit" | "delete" | "details" | "copy">(["details", "copy"]);
+
+    if (contextMenuItemsProp) {
+      if (contextMenuItemsProp.includes("edit") && onEditClick) {
+        items.add("edit");
+      }
+      if (contextMenuItemsProp.includes("delete") && onDeleteClick) {
+        items.add("delete");
+      }
+    } else {
+      if (onEditClick) {
+        items.add("edit");
+      }
+      if (onDeleteClick) {
+        items.add("delete");
+      }
+    }
+    return Array.from(items);
+  }, [contextMenuItemsProp, onEditClick, onDeleteClick]);
+
+  const startColResize = (event: React.MouseEvent, colIndex: number) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const col = columns[colIndex];
+    if (!col) return;
+
+    const thElement = (event.target as HTMLElement).closest("th");
+    const startX = event.clientX;
+    const startWidth = columnWidths[col.key] ?? col.width ?? (thElement ? thElement.offsetWidth : 120);
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaX = moveEvent.clientX - startX;
+      const newWidth = Math.max(50, startWidth + deltaX);
+      setColumnWidths((prev) => ({
+        ...prev,
+        [col.key]: newWidth,
+      }));
+    };
+
+    const handleMouseUp = () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+  };
+
+  const startRowResize = (event: React.MouseEvent, rowIndex: number) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const row = rows[rowIndex];
+    if (!row) return;
+
+    const startY = event.clientY;
+    const startHeight = rowHeights[row.id] ?? 34;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const deltaY = moveEvent.clientY - startY;
+      const newHeight = Math.max(24, startHeight + deltaY);
+      setRowHeights((prev) => ({
+        ...prev,
+        [row.id]: newHeight,
+      }));
+    };
+
+    const handleMouseUp = () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+  };
+
   const [selectedColumnKeys, setSelectedColumnKeys] = useState<
     Set<keyof T & string>
   >(() => new Set());
@@ -75,7 +226,11 @@ export function CustomExcelTable<T extends { id: string | number }>({
   }, [data]);
 
   useEffect(() => {
-    setSelectedRowIds((current) => {
+    setInternalSelectedRowIds((current) => {
+      const validIds = new Set(data.map((row) => row.id));
+      return new Set([...current].filter((id) => validIds.has(id)));
+    });
+    setInternalCheckedRowIds((current) => {
       const validIds = new Set(data.map((row) => row.id));
       return new Set([...current].filter((id) => validIds.has(id)));
     });
@@ -101,8 +256,16 @@ export function CustomExcelTable<T extends { id: string | number }>({
       dragStartRef.current = null;
     }
 
+    const handleWindowClick = () => {
+      setContextMenu(null);
+    };
+
     window.addEventListener("mouseup", stopDragSelection);
-    return () => window.removeEventListener("mouseup", stopDragSelection);
+    window.addEventListener("click", handleWindowClick);
+    return () => {
+      window.removeEventListener("mouseup", stopDragSelection);
+      window.removeEventListener("click", handleWindowClick);
+    };
   }, []);
 
   const currentPage = page ?? internalPage;
@@ -119,23 +282,7 @@ export function CustomExcelTable<T extends { id: string | number }>({
     if (currentPage > totalPages) setCurrentPage(totalPages);
   }, [currentPage, setCurrentPage, totalPages]);
 
-  function toggleRowSelection(rowId: string | number) {
-    setSelectedRowIds((current) => {
-      const next = new Set(current);
-      if (next.has(rowId)) next.delete(rowId);
-      else next.add(rowId);
-      return next;
-    });
-  }
 
-  function toggleColumnSelection(key: keyof T & string) {
-    setSelectedColumnKeys((current) => {
-      const next = new Set(current);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }
 
   function cellKey(row: T, column: ExcelColumn<T>) {
     return `${String(row.id)}::${column.key}`;
@@ -406,6 +553,55 @@ export function CustomExcelTable<T extends { id: string | number }>({
     }
   }
 
+  function handleCopySelectionComma() {
+    let minRow = -1;
+    let maxRow = -1;
+    let minCol = -1;
+    let maxCol = -1;
+
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r];
+      for (let c = 0; c < columns.length; c++) {
+        const col = columns[c];
+        if (isCellSelected(row, col)) {
+          if (minRow === -1 || r < minRow) minRow = r;
+          if (r > maxRow) maxRow = r;
+          if (minCol === -1 || c < minCol) minCol = c;
+          if (c > maxCol) maxCol = c;
+        }
+      }
+    }
+
+    if (minRow === -1) {
+      if (activeCell) {
+        const row = rows[activeCell.row];
+        const col = columns[activeCell.col];
+        if (row && col) {
+          navigator.clipboard.writeText(String(row[col.key] ?? "")).catch(() => {});
+        }
+      }
+      return;
+    }
+
+    const copiedCells: string[] = [];
+    for (let r = minRow; r <= maxRow; r++) {
+      const row = rows[r];
+      if (!row) continue;
+      for (let c = minCol; c <= maxCol; c++) {
+        const col = columns[c];
+        if (!col) continue;
+        if (isCellSelected(row, col)) {
+          copiedCells.push(String(row[col.key] ?? ""));
+        }
+      }
+    }
+
+    const textToCopy = copiedCells.join(", ");
+    navigator.clipboard.writeText(textToCopy).catch((err) => {
+      console.error("Failed to copy comma separated cells: ", err);
+    });
+  }
+
   return (
     <div className='excel-container'>
       <ScrollArea
@@ -431,20 +627,34 @@ export function CustomExcelTable<T extends { id: string | number }>({
                   }}
                   title='Clear selection'
                 />
+                {withSelection && (
+                  <th style={{ width: 40, textAlign: "center" }}>
+                    <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100%", width: "100%" }}>
+                      <Checkbox
+                        style={{ cursor: "pointer" }}
+                        styles={{ input: { cursor: "pointer" } }}
+                        checked={paginatedRows.length > 0 && paginatedRows.every(row => checkedRowIds.has(row.id))}
+                        indeterminate={paginatedRows.some(row => checkedRowIds.has(row.id)) && !paginatedRows.every(row => checkedRowIds.has(row.id))}
+                        onChange={(event) => {
+                          const checked = event.currentTarget.checked;
+                          const next = new Set(checkedRowIds);
+                          paginatedRows.forEach(row => {
+                            if (checked) next.add(row.id);
+                            else next.delete(row.id);
+                          });
+                          setCheckedRowIds(next);
+                        }}
+                      />
+                    </div>
+                  </th>
+                )}
                 {columns.map((col, colIndex) => (
                   <th
                     key={col.key}
                     className={
                       selectedColumnKeys.has(col.key) ? "header-selected" : ""
                     }
-                    style={{ width: col.width ? `${col.width}px` : undefined }}
-                    onClick={() => {
-                      if (didDragRef.current) {
-                        didDragRef.current = false;
-                        return;
-                      }
-                      toggleColumnSelection(col.key);
-                    }}
+                    style={{ width: columnWidths[col.key] ? `${columnWidths[col.key]}px` : (col.width ? `${col.width}px` : undefined) }}
                     onMouseDown={(event) => {
                       if (event.button !== 0) return;
                       event.preventDefault();
@@ -475,6 +685,10 @@ export function CustomExcelTable<T extends { id: string | number }>({
                           : "<>"}
                       </button>
                     )}
+                    <div
+                      className='resize-handle'
+                      onMouseDown={(e) => startColResize(e, colIndex)}
+                    />
                   </th>
                 ))}
                 {renderRowActions && (
@@ -490,18 +704,13 @@ export function CustomExcelTable<T extends { id: string | number }>({
                   <tr
                     key={row.id}
                     className={getRowClassName?.(row, rowIndex) ?? ""}
-                    style={getRowStyle?.(row, rowIndex)}
+                    style={{
+                      ...getRowStyle?.(row, rowIndex),
+                      height: rowHeights[row.id] ? `${rowHeights[row.id]}px` : undefined,
+                    }}
                   >
                     <td
                       className={`excel-row-header ${isRowSelected ? "header-selected" : ""}`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        if (didDragRef.current) {
-                          didDragRef.current = false;
-                          return;
-                        }
-                        toggleRowSelection(row.id);
-                      }}
                       onMouseDown={(event) => {
                         if (event.button !== 0) return;
                         event.preventDefault();
@@ -510,9 +719,52 @@ export function CustomExcelTable<T extends { id: string | number }>({
                         gridContainerRef.current?.focus();
                       }}
                       onMouseEnter={() => extendRowSelection(rowIndex)}
+                      onContextMenu={(event) => {
+                        if (activeItems.length === 0) return;
+                        event.preventDefault();
+                        event.stopPropagation();
+
+                        const isAlreadySelected = selectedRowIds.has(row.id);
+                        if (!isAlreadySelected) {
+                          setSelectedRowIds(new Set([row.id]));
+                          setSelectedCellKeys(new Set());
+                          setSelectedColumnKeys(new Set());
+                        }
+
+                        setContextMenu({
+                          x: event.clientX,
+                          y: event.clientY,
+                          row,
+                          col: columns[0],
+                          rowIndex,
+                          colIndex: 0,
+                        });
+                      }}
                     >
                       {rowIndex + 1}
+                      <div
+                        className='row-resize-handle'
+                        onMouseDown={(e) => startRowResize(e, rowIndex)}
+                      />
                     </td>
+                    {withSelection && (
+                      <td style={{ width: 40, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
+                        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100%", width: "100%" }}>
+                          <Checkbox
+                            style={{ cursor: "pointer" }}
+                            styles={{ input: { cursor: "pointer" } }}
+                            checked={checkedRowIds.has(row.id)}
+                            onChange={(event) => {
+                              const checked = event.currentTarget.checked;
+                              const next = new Set(checkedRowIds);
+                              if (checked) next.add(row.id);
+                              else next.delete(row.id);
+                              setCheckedRowIds(next);
+                            }}
+                          />
+                        </div>
+                      </td>
+                    )}
                     {columns.map((col, colIndex) => {
                       const isActive =
                         activeCell?.row === rowIndex &&
@@ -524,7 +776,7 @@ export function CustomExcelTable<T extends { id: string | number }>({
                           key={col.key}
                           className={`${isActive ? "active-cell" : ""} ${selected ? "selected-cell" : ""}`}
                           style={{
-                            width: col.width ? `${col.width}px` : undefined,
+                            width: columnWidths[col.key] ? `${columnWidths[col.key]}px` : (col.width ? `${col.width}px` : undefined),
                           }}
                           onClick={() => {
                             if (didDragRef.current) {
@@ -542,6 +794,30 @@ export function CustomExcelTable<T extends { id: string | number }>({
                             gridContainerRef.current?.focus();
                           }}
                           onMouseEnter={() => extendCellSelection(rowIndex, colIndex)}
+                          onContextMenu={(event) => {
+                            if (activeItems.length === 0) return;
+                            event.preventDefault();
+                            event.stopPropagation();
+
+                            const isAlreadySelected = isCellSelected(row, col);
+                            if (!isAlreadySelected) {
+                              setActiveCell({ row: rowIndex, col: colIndex });
+                              const next = new Set<string>();
+                              next.add(cellKey(row, col));
+                              setSelectedCellKeys(next);
+                              setSelectedRowIds(new Set());
+                              setSelectedColumnKeys(new Set());
+                            }
+
+                            setContextMenu({
+                              x: event.clientX,
+                              y: event.clientY,
+                              row,
+                              col,
+                              rowIndex,
+                              colIndex,
+                            });
+                          }}
                         >
                           <div
                             className={`excel-cell-display ${isNumber ? "cell-right" : "cell-left"}`}
@@ -567,7 +843,7 @@ export function CustomExcelTable<T extends { id: string | number }>({
               {!paginatedRows.length && (
                 <tr>
                   <td className='excel-row-header'>0</td>
-                  <td colSpan={columns.length + (renderRowActions ? 1 : 0)}>
+                  <td colSpan={columns.length + (renderRowActions ? 1 : 0) + (withSelection ? 1 : 0)}>
                     <div className='excel-cell-display'>
                       No records to display
                     </div>
@@ -651,6 +927,167 @@ export function CustomExcelTable<T extends { id: string | number }>({
           </button>
         </div>
       </div>
+      {contextMenu && (
+        <div
+          className='excel-context-menu'
+          style={{
+            position: "fixed",
+            left: `${contextMenu.x}px`,
+            top: `${contextMenu.y}px`,
+            zIndex: 1000,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {activeItems.includes("edit") && (
+            <button
+              type='button'
+              className='excel-context-menu-item'
+              onClick={() => {
+                onEditClick?.(contextMenu.row, contextMenu.rowIndex);
+                setContextMenu(null);
+              }}
+            >
+              <Edit3 size={14} className='excel-context-menu-icon' />
+              <span>Edit</span>
+            </button>
+          )}
+          {activeItems.includes("delete") && (
+            <button
+              type='button'
+              className='excel-context-menu-item'
+              onClick={() => {
+                onDeleteClick?.(contextMenu.row, contextMenu.rowIndex);
+                setContextMenu(null);
+              }}
+            >
+              <Trash2 size={14} className='excel-context-menu-icon' style={{ color: "#fa5252" }} />
+              <span style={{ color: "#fa5252" }}>Delete</span>
+            </button>
+          )}
+          {activeItems.includes("details") && (
+            <button
+              type='button'
+              className='excel-context-menu-item'
+              onClick={() => {
+                setSelectedRowForDetails(contextMenu.row);
+                setDetailModalOpen(true);
+                setContextMenu(null);
+              }}
+            >
+              <Eye size={14} className='excel-context-menu-icon' />
+              <span>View Details</span>
+            </button>
+          )}
+          {activeItems.includes("copy") &&
+            (activeItems.includes("edit") ||
+              activeItems.includes("delete") ||
+              activeItems.includes("details")) && (
+              <div className='excel-context-menu-divider' />
+            )}
+          {activeItems.includes("copy") && (
+            <button
+              type='button'
+              className='excel-context-menu-item'
+              onClick={() => {
+                handleCopySelectionComma();
+                setContextMenu(null);
+              }}
+            >
+              <Copy size={14} className='excel-context-menu-icon' />
+              <span>Copy Selected Cell(s)</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {selectedRowForDetails && (
+        <Modal
+          opened={detailModalOpen}
+          onClose={() => {
+            setDetailModalOpen(false);
+            setSelectedRowForDetails(null);
+          }}
+          title='Row Details'
+          size='md'
+          centered
+        >
+          <div style={{ padding: "8px 4px 8px 4px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+              {columns.map((col) => {
+                const rawVal = selectedRowForDetails[col.key];
+                let displayVal = "";
+                if (rawVal === undefined || rawVal === null || String(rawVal).trim() === "") {
+                  displayVal = "-";
+                } else if (col.type === "date") {
+                  displayVal = new Date(String(rawVal)).toLocaleDateString(undefined, {
+                    year: "numeric",
+                    month: "long",
+                    day: "numeric",
+                  });
+                } else if (col.type === "number") {
+                  displayVal = Number(rawVal).toLocaleString();
+                } else {
+                  displayVal = String(rawVal);
+                }
+
+                return (
+                  <div
+                    key={col.key}
+                    style={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      padding: "10px 14px",
+                      borderRadius: "6px",
+                      backgroundColor: "var(--app-surface-subtle)",
+                      border: "1px solid var(--app-border)",
+                      gap: "16px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontWeight: 600,
+                        color: "var(--app-muted)",
+                        fontSize: "13px",
+                        width: "120px",
+                        minWidth: "120px",
+                        textAlign: "left",
+                        paddingLeft: "4px",
+                      }}
+                    >
+                      {col.label}
+                    </div>
+                    <div
+                      style={{
+                        color: "var(--app-text)",
+                        fontSize: "13px",
+                        fontWeight: displayVal === "-" ? 400 : 500,
+                        textAlign: "left",
+                        flex: 1,
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      {displayVal}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20, paddingRight: 4 }}>
+            <Button
+              onClick={() => {
+                setDetailModalOpen(false);
+                setSelectedRowForDetails(null);
+              }}
+              variant='light'
+              color='blue'
+              radius='md'
+            >
+              Close
+            </Button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
