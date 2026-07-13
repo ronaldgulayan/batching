@@ -618,7 +618,7 @@ export function CustomExcelTable<T extends { id: string | number }>({
             <thead>
               <tr className='excel-header-row'>
                 <th
-                  style={{ width: 50, textAlign: "center" }}
+                  style={{ width: 50, textAlign: "center", padding: 0 }}
                   onClick={() => {
                     setSelectedRowIds(new Set());
                     setSelectedColumnKeys(new Set());
@@ -628,7 +628,7 @@ export function CustomExcelTable<T extends { id: string | number }>({
                   title='Clear selection'
                 />
                 {withSelection && (
-                  <th style={{ width: 40, textAlign: "center" }}>
+                  <th style={{ width: 40, textAlign: "center", padding: 0 }}>
                     <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100%", width: "100%" }}>
                       <Checkbox
                         style={{ cursor: "pointer" }}
@@ -820,7 +820,7 @@ export function CustomExcelTable<T extends { id: string | number }>({
                           }}
                         >
                           <div
-                            className={`excel-cell-display ${isNumber ? "cell-right" : "cell-left"}`}
+                            className="excel-cell-display cell-left"
                           >
                             {renderCell?.(row, col, rowIndex) ?? formatDisplayValue(row[col.key], col)}
                             {editable && col.type === "autocomplete" && (

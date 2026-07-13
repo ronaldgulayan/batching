@@ -25,6 +25,7 @@ import {
   WalletCards,
 } from "lucide-react";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
+import { DateShortcutInput } from "../components/DateShortcutInput";
 
 type PeriodMode = "today" | "range" | "month" | "year";
 
@@ -305,39 +306,36 @@ export function DashboardPage() {
             spacing='sm'
           >
             {periodMode === "today" && (
-              <TextInput
+              <DateShortcutInput
                 label='Current Date'
-                type='date'
                 value={filters.currentDate}
-                onChange={(event) =>
+                onChange={(val) =>
                   setFilters((current) => ({
                     ...current,
-                    currentDate: event.currentTarget.value,
+                    currentDate: val,
                   }))
                 }
               />
             )}
             {periodMode === "range" && (
               <>
-                <TextInput
+                <DateShortcutInput
                   label='Start Date'
-                  type='date'
                   value={filters.startDate}
-                  onChange={(event) =>
+                  onChange={(val) =>
                     setFilters((current) => ({
                       ...current,
-                      startDate: event.currentTarget.value,
+                      startDate: val,
                     }))
                   }
                 />
-                <TextInput
+                <DateShortcutInput
                   label='End Date'
-                  type='date'
                   value={filters.endDate}
-                  onChange={(event) =>
+                  onChange={(val) =>
                     setFilters((current) => ({
                       ...current,
-                      endDate: event.currentTarget.value,
+                      endDate: val,
                     }))
                   }
                 />

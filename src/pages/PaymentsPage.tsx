@@ -14,10 +14,11 @@ import {
   Table,
   TextInput,
 } from "@mantine/core";
-import { AlertCircle, Edit3, RefreshCw, Save } from "lucide-react";
+import { AlertCircle, Edit3, RefreshCw, Save, Trash2 } from "lucide-react";
 import { SuggestionTextInput } from "../components/SuggestionTextInput";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 import { CustomExcelTable, type ExcelColumn } from "../components/CustomExcelTable";
+import { DateShortcutInput } from "../components/DateShortcutInput";
 
 type PaymentMethod = "CASH" | "CK" | "ONLINE" | "DEPOSIT";
 
@@ -475,6 +476,34 @@ export function PaymentsPage() {
     setForm(emptyForm);
   }
 
+  async function deletePayment(sale: PaidSale) {
+    if (!sale.payment_id) return;
+    if (!window.confirm('Are you sure you want to delete this payment? This will mark the sale back as unpaid.')) {
+      return;
+    }
+    setLoading(true);
+    setError("");
+    setMessage("");
+
+    const { error: deleteError } = await supabase
+      .from("sales_payments")
+      .delete()
+      .eq("id", sale.payment_id);
+
+    setLoading(false);
+
+    if (deleteError) {
+      setError(deleteError.message);
+      return;
+    }
+
+    setMessage("Payment deleted successfully.");
+    if (editingPayment?.paymentId === sale.payment_id) {
+      cancelEditPayment();
+    }
+    await loadRows();
+  }
+
   function buildRemarks() {
     const parts = [`Sales: ${form.sales_person.trim()}`];
     if (form.payment_method === "CK" && form.counter_date) {
@@ -676,16 +705,15 @@ export function PaymentsPage() {
                   }));
                 }}
               />
-              <TextInput
+              <DateShortcutInput
                 label='Payment Date'
-                type='date'
                 value={form.payment_date}
                 error={paymentDateError}
-                onChange={(event) => {
+                onChange={(val) => {
                   setPaymentDateError("");
                   setForm((current) => ({
                     ...current,
-                    payment_date: event.currentTarget.value,
+                    payment_date: val,
                   }));
                 }}
               />
@@ -719,14 +747,13 @@ export function PaymentsPage() {
                 />
               )}
               {form.payment_method === "CK" && (
-                <TextInput
+                <DateShortcutInput
                   label='Counter Date'
-                  type='date'
                   value={form.counter_date}
-                  onChange={(event) =>
+                  onChange={(val) =>
                     setForm((current) => ({
                       ...current,
-                      counter_date: event.currentTarget.value,
+                      counter_date: val,
                     }))
                   }
                 />
@@ -857,16 +884,33 @@ export function PaymentsPage() {
                 startEditPayment(row);
               }
             }}
+            onDeleteClick={(row) => {
+              if (row.payment_id) {
+                void deletePayment(row);
+              }
+            }}
             renderRowActions={(row) => (
-              <Button
-                size='xs'
-                variant='subtle'
-                leftSection={<Edit3 size={14} />}
-                onClick={() => startEditPayment(row)}
-                disabled={!row.payment_id}
-              >
-                Edit
-              </Button>
+              <Group gap='xs' justify='center'>
+                <Button
+                  size='xs'
+                  variant='subtle'
+                  leftSection={<Edit3 size={14} />}
+                  onClick={() => startEditPayment(row)}
+                  disabled={!row.payment_id}
+                >
+                  Edit
+                </Button>
+                <Button
+                  size='xs'
+                  variant='subtle'
+                  color='red'
+                  leftSection={<Trash2 size={14} />}
+                  onClick={() => void deletePayment(row)}
+                  disabled={!row.payment_id}
+                >
+                  Delete
+                </Button>
+              </Group>
             )}
           />
         </Stack>

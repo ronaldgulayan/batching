@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Badge, Button, NumberInput, Paper, SimpleGrid, Stack, TextInput } from '@mantine/core';
-import { AlertCircle, Edit3, RefreshCw, Save, X } from 'lucide-react';
+import { Alert, Badge, Button, Group, NumberInput, Paper, SimpleGrid, Stack, TextInput } from '@mantine/core';
+import { AlertCircle, Edit3, RefreshCw, Save, Trash2, X } from 'lucide-react';
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient';
 import { CustomExcelTable, type ExcelColumn } from './CustomExcelTable';
 
@@ -124,6 +124,29 @@ export function MaintenanceLookupPage({ table, orderBy, fields, columns, uniqueK
     setForm({});
   }
 
+  async function deleteRecord(row: RecordRow) {
+    if (!window.confirm('Are you sure you want to delete this record?')) {
+      return;
+    }
+    setLoading(true);
+    setError('');
+    setMessage('');
+
+    const { error: deleteError } = await supabase.from(table).delete().eq('id', row.id);
+    setLoading(false);
+
+    if (deleteError) {
+      setError(deleteError.message);
+      return;
+    }
+
+    setMessage('Deleted.');
+    if (editingId === row.id) {
+      cancelEdit();
+    }
+    await loadRows();
+  }
+
   useEffect(() => {
     void loadRows();
   }, [table]);
@@ -193,10 +216,16 @@ export function MaintenanceLookupPage({ table, orderBy, fields, columns, uniqueK
         columns={columns}
         data={rows}
         onEditClick={(row) => startEdit(row)}
+        onDeleteClick={(row) => deleteRecord(row)}
         renderRowActions={(row) => (
-          <Button size="xs" variant="subtle" leftSection={<Edit3 size={14} />} onClick={() => startEdit(row)}>
-            Edit
-          </Button>
+          <Group gap="xs" justify="center">
+            <Button size="xs" variant="subtle" leftSection={<Edit3 size={14} />} onClick={() => startEdit(row)}>
+              Edit
+            </Button>
+            <Button size="xs" variant="subtle" color="red" leftSection={<Trash2 size={14} />} onClick={() => deleteRecord(row)}>
+              Delete
+            </Button>
+          </Group>
         )}
       />
     </Stack>

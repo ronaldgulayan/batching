@@ -10,10 +10,11 @@ import {
   Stack,
   TextInput,
 } from "@mantine/core";
-import { AlertCircle, RefreshCw, Save } from "lucide-react";
+import { AlertCircle, RefreshCw, Save, Trash2 } from "lucide-react";
 import { CustomExcelTable, type ExcelColumn } from "../components/CustomExcelTable";
 import { SuggestionTextInput } from "../components/SuggestionTextInput";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
+import { DateShortcutInput } from "../components/DateShortcutInput";
 
 type Lookup = {
   id: string;
@@ -246,6 +247,30 @@ export function GrabaPage() {
     }
   }
 
+  async function deleteGraba(row: GrabaRow) {
+    if (!window.confirm("Are you sure you want to delete this GRABA record? This will perform a hard delete.")) {
+      return;
+    }
+    setLoading(true);
+    setError("");
+    setMessage("");
+
+    const { error: deleteError } = await supabase
+      .from("graba_records")
+      .delete()
+      .eq("id", row.id);
+
+    setLoading(false);
+
+    if (deleteError) {
+      setError(deleteError.message);
+      return;
+    }
+
+    setMessage("GRABA record deleted successfully.");
+    await loadRows();
+  }
+
   useEffect(() => {
     void loadRows();
   }, []);
@@ -266,11 +291,10 @@ export function GrabaPage() {
         >
           <Stack gap='md'>
             <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
-              <TextInput
+              <DateShortcutInput
                 label='Date'
-                type='date'
                 value={form.graba_date}
-                onChange={(event) => setForm((current) => ({ ...current, graba_date: event.currentTarget.value }))}
+                onChange={(val) => setForm((current) => ({ ...current, graba_date: val }))}
               />
               <NumberInput
                 label='DR'
@@ -389,6 +413,18 @@ export function GrabaPage() {
       <CustomExcelTable
         columns={columns}
         data={rows}
+        onDeleteClick={(row) => deleteGraba(row)}
+        renderRowActions={(row) => (
+          <Button
+            size="xs"
+            variant="subtle"
+            color="red"
+            leftSection={<Trash2 size={14} />}
+            onClick={() => deleteGraba(row)}
+          >
+            Delete
+          </Button>
+        )}
       />
     </Stack>
   );

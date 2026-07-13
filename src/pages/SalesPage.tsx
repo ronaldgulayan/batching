@@ -29,6 +29,7 @@ import {
 } from "../components/CustomExcelTable";
 import { SuggestionTextInput } from "../components/SuggestionTextInput";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
+import { DateShortcutInput } from "../components/DateShortcutInput";
 
 type Lookup = {
   id: string;
@@ -479,6 +480,33 @@ export function SalesPage() {
     setForm({ ...emptyForm, sale_or_number: nextOrNumber });
   }
 
+  async function deleteSale(row: SaleRow) {
+    if (!window.confirm("Are you sure you want to delete this sale? This will perform a hard delete.")) {
+      return;
+    }
+    setLoading(true);
+    setError("");
+    setMessage("");
+
+    const { error: deleteError } = await supabase
+      .from("sales_records")
+      .delete()
+      .eq("id", row.id);
+
+    setLoading(false);
+
+    if (deleteError) {
+      setError(deleteError.message);
+      return;
+    }
+
+    setMessage("Sale deleted successfully.");
+    if (editingSale?.id === row.id) {
+      cancelEditSale();
+    }
+    await loadRows();
+  }
+
   async function saveBatchSales() {
     if (!isSupabaseConfigured) {
       setError("Supabase credentials are missing from .env.");
@@ -661,14 +689,13 @@ export function SalesPage() {
         >
           <Stack gap="md">
             <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
-              <TextInput
+              <DateShortcutInput
                 label="Date"
-                type="date"
                 value={form.sale_date}
-                onChange={(event) =>
+                onChange={(val) =>
                   setForm((current) => ({
                     ...current,
-                    sale_date: event.currentTarget.value,
+                    sale_date: val,
                   }))
                 }
               />
@@ -873,12 +900,11 @@ export function SalesPage() {
                               />
                             </Table.Td>
                             <Table.Td>
-                              <TextInput
-                                type="date"
+                              <DateShortcutInput
                                 value={draft.sale_date}
-                                onChange={(event) =>
+                                onChange={(val) =>
                                   updateBatchDraft(draft.id, {
-                                    sale_date: event.currentTarget.value,
+                                    sale_date: val,
                                   })
                                 }
                               />
@@ -1024,15 +1050,27 @@ export function SalesPage() {
         columns={saleColumns}
         data={filteredRows}
         onEditClick={(row) => startEditSale(row)}
+        onDeleteClick={(row) => deleteSale(row)}
         renderRowActions={(row) => (
-          <Button
-            size="xs"
-            variant="subtle"
-            leftSection={<Edit3 size={14} />}
-            onClick={() => startEditSale(row)}
-          >
-            Edit
-          </Button>
+          <Group gap="xs" justify="center">
+            <Button
+              size="xs"
+              variant="subtle"
+              leftSection={<Edit3 size={14} />}
+              onClick={() => startEditSale(row)}
+            >
+              Edit
+            </Button>
+            <Button
+              size="xs"
+              variant="subtle"
+              color="red"
+              leftSection={<Trash2 size={14} />}
+              onClick={() => deleteSale(row)}
+            >
+              Delete
+            </Button>
+          </Group>
         )}
         renderCell={(row, column) => {
           if (column.key !== "payment_status") return undefined;
