@@ -1,14 +1,17 @@
 import React, { useEffect, useState } from "react";
-import { TextInput, type TextInputProps } from "@mantine/core";
+import { TextInput, CloseButton, type TextInputProps } from "@mantine/core";
 
 export function parseDateShortcut(input: string): string {
   const clean = input.trim();
-  const digits = clean.replace(/\D/g, "");
-
   const today = new Date();
-  const currentYear = today.getFullYear();
-  
   const pad = (n: number) => String(n).padStart(2, "0");
+
+  if (!clean) {
+    return `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+  }
+
+  const digits = clean.replace(/\D/g, "");
+  const currentYear = today.getFullYear();
 
   const formatDateIfValid = (y: number, m: number, d: number): string | null => {
     if (m < 1 || m > 12) return null;
@@ -59,9 +62,10 @@ export function parseDateShortcut(input: string): string {
 type Props = Omit<TextInputProps, "value" | "onChange"> & {
   value: string;
   onChange: (value: string) => void;
+  clearable?: boolean;
 };
 
-export function DateShortcutInput({ value, onChange, ...props }: Props) {
+export function DateShortcutInput({ value, onChange, clearable = false, ...props }: Props) {
   const [localVal, setLocalVal] = useState(value);
 
   // Synchronize internal input value with the value prop from parent
@@ -70,6 +74,17 @@ export function DateShortcutInput({ value, onChange, ...props }: Props) {
   }, [value]);
 
   const commitValue = (val: string) => {
+    if (!val.trim()) {
+      if (clearable) {
+        setLocalVal("");
+        onChange("");
+      } else {
+        const formatted = parseDateShortcut("");
+        setLocalVal(formatted);
+        onChange(formatted);
+      }
+      return;
+    }
     const formatted = parseDateShortcut(val);
     setLocalVal(formatted);
     onChange(formatted);
@@ -85,6 +100,17 @@ export function DateShortcutInput({ value, onChange, ...props }: Props) {
     }
   };
 
+  const rightSection = (clearable && localVal) ? (
+    <CloseButton
+      size="sm"
+      onClick={() => {
+        setLocalVal("");
+        onChange("");
+      }}
+      aria-label="Clear date"
+    />
+  ) : null;
+
   return (
     <TextInput
       {...props}
@@ -94,6 +120,7 @@ export function DateShortcutInput({ value, onChange, ...props }: Props) {
       onChange={(e) => setLocalVal(e.currentTarget.value)}
       onBlur={handleBlur}
       onKeyDown={handleKeyDown}
+      rightSection={rightSection}
     />
   );
 }

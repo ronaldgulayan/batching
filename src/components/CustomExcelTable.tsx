@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ScrollArea, Modal, Table, Button, Checkbox } from "@mantine/core";
-import { Edit3, Trash2, Eye, Copy } from "lucide-react";
+import { Edit3, Trash2, Eye, Copy, Calendar, Check } from "lucide-react";
 import "./excel.css";
 
 type CellType = "text" | "number" | "date" | "autocomplete";
@@ -31,9 +31,11 @@ type Props<T extends { id: string | number }> = {
   onSelectionChange?: (selectedIds: Set<string | number>) => void;
   checkedRowIds?: Set<string | number>;
   onCheckedRowIdsChange?: (checkedIds: Set<string | number>) => void;
-  contextMenuItems?: readonly ("delete" | "edit" | "details" | "copy")[];
+  contextMenuItems?: readonly ("delete" | "edit" | "details" | "copy" | "counter_date" | "select_rows")[];
   onEditClick?: (row: T, rowIndex: number) => void;
   onDeleteClick?: (row: T, rowIndex: number) => void;
+  onCounterClick?: (row: T, selectedRows: T[]) => void;
+  onSelectRowsClick?: (selectedRows: T[]) => void;
 };
 
 export function CustomExcelTable<T extends { id: string | number }>({
@@ -56,6 +58,8 @@ export function CustomExcelTable<T extends { id: string | number }>({
   contextMenuItems: contextMenuItemsProp,
   onEditClick,
   onDeleteClick,
+  onCounterClick,
+  onSelectRowsClick,
 }: Props<T>) {
   const [rows, setRows] = useState<T[]>(data);
   const [activeCell, setActiveCell] = useState<{
@@ -119,6 +123,8 @@ export function CustomExcelTable<T extends { id: string | number }>({
     onCheckedRowIdsChange?.(nextVal);
   };
 
+
+
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const [rowHeights, setRowHeights] = useState<Record<string | number, number>>({});
 
@@ -126,7 +132,7 @@ export function CustomExcelTable<T extends { id: string | number }>({
     if (contextMenuItemsProp && contextMenuItemsProp.length === 0) {
       return [];
     }
-    const items = new Set<"edit" | "delete" | "details" | "copy">(["details", "copy"]);
+    const items = new Set<"edit" | "delete" | "details" | "copy" | "counter_date" | "select_rows">(["details", "copy"]);
 
     if (contextMenuItemsProp) {
       if (contextMenuItemsProp.includes("edit") && onEditClick) {
@@ -134,6 +140,12 @@ export function CustomExcelTable<T extends { id: string | number }>({
       }
       if (contextMenuItemsProp.includes("delete") && onDeleteClick) {
         items.add("delete");
+      }
+      if (contextMenuItemsProp.includes("counter_date") && onCounterClick) {
+        items.add("counter_date");
+      }
+      if (contextMenuItemsProp.includes("select_rows") && onSelectRowsClick) {
+        items.add("select_rows");
       }
     } else {
       if (onEditClick) {
@@ -144,7 +156,7 @@ export function CustomExcelTable<T extends { id: string | number }>({
       }
     }
     return Array.from(items);
-  }, [contextMenuItemsProp, onEditClick, onDeleteClick]);
+  }, [contextMenuItemsProp, onEditClick, onDeleteClick, onCounterClick, onSelectRowsClick]);
 
   const startColResize = (event: React.MouseEvent, colIndex: number) => {
     event.preventDefault();
@@ -267,6 +279,8 @@ export function CustomExcelTable<T extends { id: string | number }>({
       window.removeEventListener("click", handleWindowClick);
     };
   }, []);
+
+
 
   const currentPage = page ?? internalPage;
   const setCurrentPage = onPageChange ?? setInternalPage;
@@ -927,78 +941,121 @@ export function CustomExcelTable<T extends { id: string | number }>({
           </button>
         </div>
       </div>
-      {contextMenu && (
-        <div
-          className='excel-context-menu'
-          style={{
-            position: "fixed",
-            left: `${contextMenu.x}px`,
-            top: `${contextMenu.y}px`,
-            zIndex: 1000,
-          }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          {activeItems.includes("edit") && (
-            <button
-              type='button'
-              className='excel-context-menu-item'
-              onClick={() => {
-                onEditClick?.(contextMenu.row, contextMenu.rowIndex);
-                setContextMenu(null);
-              }}
-            >
-              <Edit3 size={14} className='excel-context-menu-icon' />
-              <span>Edit</span>
-            </button>
-          )}
-          {activeItems.includes("delete") && (
-            <button
-              type='button'
-              className='excel-context-menu-item'
-              onClick={() => {
-                onDeleteClick?.(contextMenu.row, contextMenu.rowIndex);
-                setContextMenu(null);
-              }}
-            >
-              <Trash2 size={14} className='excel-context-menu-icon' style={{ color: "#fa5252" }} />
-              <span style={{ color: "#fa5252" }}>Delete</span>
-            </button>
-          )}
-          {activeItems.includes("details") && (
-            <button
-              type='button'
-              className='excel-context-menu-item'
-              onClick={() => {
-                setSelectedRowForDetails(contextMenu.row);
-                setDetailModalOpen(true);
-                setContextMenu(null);
-              }}
-            >
-              <Eye size={14} className='excel-context-menu-icon' />
-              <span>View Details</span>
-            </button>
-          )}
-          {activeItems.includes("copy") &&
-            (activeItems.includes("edit") ||
-              activeItems.includes("delete") ||
-              activeItems.includes("details")) && (
-              <div className='excel-context-menu-divider' />
+      {contextMenu && (() => {
+        const targetIds = new Set<string | number>();
+        selectedRowIds.forEach((id) => targetIds.add(id));
+        
+        selectedCellKeys.forEach((key) => {
+          const parts = key.split("::");
+          if (parts[0]) {
+            const matchingRow = data.find((r) => String(r.id) === parts[0]);
+            if (matchingRow) targetIds.add(matchingRow.id);
+          }
+        });
+
+        let targetRows = data.filter((r) => targetIds.has(r.id));
+        const clickedInSelection = targetRows.some((r) => r.id === contextMenu.row.id);
+        const activeTargetRows = clickedInSelection && targetRows.length > 0 ? targetRows : [contextMenu.row];
+
+        return (
+          <div
+            className='excel-context-menu'
+            style={{
+              position: "fixed",
+              left: `${contextMenu.x}px`,
+              top: `${contextMenu.y}px`,
+              zIndex: 1000,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {activeItems.includes("edit") && (
+              <button
+                type='button'
+                className='excel-context-menu-item'
+                onClick={() => {
+                  onEditClick?.(contextMenu.row, contextMenu.rowIndex);
+                  setContextMenu(null);
+                }}
+              >
+                <Edit3 size={14} className='excel-context-menu-icon' />
+                <span>Edit</span>
+              </button>
             )}
-          {activeItems.includes("copy") && (
-            <button
-              type='button'
-              className='excel-context-menu-item'
-              onClick={() => {
-                handleCopySelectionComma();
-                setContextMenu(null);
-              }}
-            >
-              <Copy size={14} className='excel-context-menu-icon' />
-              <span>Copy Selected Cell(s)</span>
-            </button>
-          )}
-        </div>
-      )}
+            {activeItems.includes("delete") && (
+              <button
+                type='button'
+                className='excel-context-menu-item'
+                onClick={() => {
+                  onDeleteClick?.(contextMenu.row, contextMenu.rowIndex);
+                  setContextMenu(null);
+                }}
+              >
+                <Trash2 size={14} className='excel-context-menu-icon' style={{ color: "#fa5252" }} />
+                <span style={{ color: "#fa5252" }}>Delete</span>
+              </button>
+            )}
+            {activeItems.includes("details") && (
+              <button
+                type='button'
+                className='excel-context-menu-item'
+                onClick={() => {
+                  setSelectedRowForDetails(contextMenu.row);
+                  setDetailModalOpen(true);
+                  setContextMenu(null);
+                }}
+              >
+                <Eye size={14} className='excel-context-menu-icon' />
+                <span>View Details</span>
+              </button>
+            )}
+            {activeItems.includes("copy") &&
+              (activeItems.includes("edit") ||
+                activeItems.includes("delete") ||
+                activeItems.includes("details")) && (
+                <div className='excel-context-menu-divider' />
+              )}
+            {activeItems.includes("copy") && (
+              <button
+                type='button'
+                className='excel-context-menu-item'
+                onClick={() => {
+                  handleCopySelectionComma();
+                  setContextMenu(null);
+                }}
+              >
+                <Copy size={14} className='excel-context-menu-icon' />
+                <span>Copy Selected Cell(s)</span>
+              </button>
+            )}
+            {activeItems.includes("counter_date") && (
+              <button
+                type='button'
+                className='excel-context-menu-item'
+                onClick={() => {
+                  onCounterClick?.(contextMenu.row, activeTargetRows);
+                  setContextMenu(null);
+                }}
+              >
+                <Calendar size={14} className='excel-context-menu-icon' />
+                <span>Counter Date</span>
+              </button>
+            )}
+            {activeItems.includes("select_rows") && (
+              <button
+                type='button'
+                className='excel-context-menu-item'
+                onClick={() => {
+                  onSelectRowsClick?.(activeTargetRows);
+                  setContextMenu(null);
+                }}
+              >
+                <Check size={14} className='excel-context-menu-icon' />
+                <span>Select ({activeTargetRows.length})</span>
+              </button>
+            )}
+          </div>
+        );
+      })()}
 
       {selectedRowForDetails && (
         <Modal

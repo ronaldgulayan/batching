@@ -38,14 +38,12 @@ type PaidSale = PayableSale & {
   payment_amount: number;
   payment_method: string;
   ck_number: string;
-  counter_date: string;
-  counter: string;
   sales_person: string;
+  term: string;
 };
 
 type PaymentDraft = {
   selected: boolean;
-  amount: number | "";
 };
 
 type SalesPaymentRecord = {
@@ -68,9 +66,9 @@ type PaymentForm = {
   payment_method: PaymentMethod;
   sales_person: string;
   ck_number: string;
-  counter_date: string;
-  counter: string;
   edit_amount: number | "";
+  total_amount_paid: number | "";
+  term: string;
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -80,9 +78,9 @@ const emptyForm: PaymentForm = {
   payment_method: "CASH",
   sales_person: "",
   ck_number: "",
-  counter_date: "",
-  counter: "",
   edit_amount: "",
+  total_amount_paid: "",
+  term: "",
 };
 
 const paymentMethods: { value: PaymentMethod; label: string }[] = [
@@ -150,9 +148,13 @@ export function PaymentsPage() {
     [payableSales, paymentDrafts],
   );
 
-  const selectedTotal = selectedDrafts.reduce(
-    (sum, { draft }) => sum + Number(draft.amount || 0),
-    0,
+  const selectedBalanceTotal = useMemo(
+    () =>
+      selectedDrafts.reduce(
+        (sum, { sale }) => sum + sale.balance_amount,
+        0,
+      ),
+    [selectedDrafts],
   );
 
   function saleMatchesSearch(sale: PayableSale, searchValue: string) {
@@ -176,8 +178,6 @@ export function PaymentsPage() {
       paidDetail.payment_amount ? displayMoney(paidDetail.payment_amount) : "",
       paidDetail.payment_method ?? "",
       paidDetail.ck_number ?? "",
-      paidDetail.counter_date ?? "",
-      paidDetail.counter ?? "",
       paidDetail.sales_person ?? "",
     ]
       .join(" ")
@@ -203,7 +203,6 @@ export function PaymentsPage() {
       { key: "total_amount", label: "Total", type: "number" },
       { key: "paid_amount", label: "Paid", type: "number" },
       { key: "balance_amount", label: "Balance", type: "number" },
-      { key: "amount" as any, label: "Amount", type: "number" },
     ],
     [],
   );
@@ -224,45 +223,26 @@ export function PaymentsPage() {
       payableSales.forEach((sale) => {
         const isSelected = newSelectedIds.has(sale.id);
         next[sale.id] = {
-          ...(next[sale.id] ?? { amount: sale.balance_amount }),
+          ...next[sale.id],
           selected: isSelected,
         };
       });
       return next;
     });
+
+    const newTotal = payableSales
+      .filter((sale) => newSelectedIds.has(sale.id))
+      .reduce((sum, sale) => sum + sale.balance_amount, 0);
+
+    setForm((current) => ({
+      ...current,
+      total_amount_paid: newTotal > 0 ? newTotal : "",
+    }));
   };
 
   const renderUnpaidCell = (row: PayableSale, column: ExcelColumn<PayableSale>) => {
     if (column.key === "sale_or_number") {
       return `OR ${row.sale_or_number}`;
-    }
-    if ((column.key as string) === "amount") {
-      const draft = paymentDrafts[row.id] ?? {
-        selected: false,
-        amount: row.balance_amount,
-      };
-      return (
-        <div onClick={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
-          <NumberInput
-            w={140}
-            min={0}
-            max={row.balance_amount}
-            value={draft.amount}
-            onChange={(value) => {
-              setAmountErrors((current) => {
-                const { [row.id]: _removed, ...rest } = current;
-                return rest;
-              });
-              updateDraft(row.id, {
-                amount: Number(value) || "",
-                selected: draft.selected || Number(value || 0) > 0,
-              });
-            }}
-            error={amountErrors[row.id]}
-            size="xs"
-          />
-        </div>
-      );
     }
     return undefined;
   };
@@ -279,9 +259,8 @@ export function PaymentsPage() {
       { key: "payment_amount", label: "Amount", type: "number" },
       { key: "payment_method", label: "Method", type: "text" },
       { key: "ck_number", label: "CK No", type: "text" },
-      { key: "counter_date", label: "Counter Date", type: "date" },
-      { key: "counter", label: "Counter", type: "text" },
       { key: "sales_person", label: "Sales", type: "text" },
+      { key: "term", label: "Term", type: "text" },
     ],
     [],
   );
@@ -366,15 +345,8 @@ export function PaymentsPage() {
             payment_amount: Number(payment?.amount || 0),
             payment_method: method,
             ck_number: method === "CK" ? (payment?.reference_number ?? "") : "",
-            counter_date:
-              method === "CK"
-                ? remarkValue(payment?.remarks ?? null, "Counter Date")
-                : "",
-            counter:
-              method === "DEPOSIT"
-                ? remarkValue(payment?.remarks ?? null, "Counter")
-                : "",
             sales_person: remarkValue(payment?.remarks ?? null, "Sales"),
+            term: remarkValue(payment?.remarks ?? null, "Term"),
           };
         }),
       );
@@ -383,7 +355,6 @@ export function PaymentsPage() {
         for (const sale of openSales) {
           nextDrafts[sale.id] = current[sale.id] ?? {
             selected: false,
-            amount: sale.balance_amount,
           };
         }
         return nextDrafts;
@@ -408,30 +379,6 @@ export function PaymentsPage() {
     }
   }
 
-  function updateDraft(saleId: string, patch: Partial<PaymentDraft>) {
-    setPaymentDrafts((current) => ({
-      ...current,
-      [saleId]: {
-        ...(current[saleId] ?? { selected: false, amount: "" }),
-        ...patch,
-      },
-    }));
-  }
-
-  function toggleDraft(sale: PayableSale) {
-    if (editingPayment) return;
-
-    const draft = paymentDrafts[sale.id] ?? {
-      selected: false,
-      amount: sale.balance_amount,
-    };
-
-    updateDraft(sale.id, {
-      selected: !draft.selected,
-      amount: draft.amount || sale.balance_amount,
-    });
-  }
-
   function startEditPayment(sale: PaidSale) {
     if (!sale.payment_id) return;
 
@@ -453,9 +400,9 @@ export function PaymentsPage() {
       payment_method: (sale.payment_method || "CASH") as PaymentMethod,
       sales_person: sale.sales_person,
       ck_number: sale.ck_number,
-      counter_date: sale.counter_date,
-      counter: sale.counter,
       edit_amount: sale.payment_amount || "",
+      total_amount_paid: "",
+      term: sale.term || "",
     });
     requestAnimationFrame(() => {
       window.scrollTo({
@@ -504,14 +451,14 @@ export function PaymentsPage() {
     await loadRows();
   }
 
-  function buildRemarks() {
-    const parts = [`Sales: ${form.sales_person.trim()}`];
-    if (form.payment_method === "CK" && form.counter_date) {
-      parts.push(`Counter Date: ${form.counter_date}`);
-    }
-    if (form.payment_method === "DEPOSIT" && form.counter.trim()) {
-      parts.push(`Counter: ${form.counter.trim()}`);
-    }
+  function buildRemarks(termOverride?: string) {
+    const parts = [];
+    const salesPerson = form.sales_person.trim();
+    if (salesPerson) parts.push(`Sales: ${salesPerson}`);
+    
+    const term = termOverride !== undefined ? termOverride : form.term.trim();
+    if (term) parts.push(`Term: ${term}`);
+    
     return parts.join(" | ");
   }
 
@@ -559,21 +506,8 @@ export function PaymentsPage() {
       return;
     }
 
-    const nextAmountErrors: Record<string, string> = {};
-    if (!editingPayment) {
-      for (const { sale, draft } of selectedDrafts) {
-        const amount = Number(draft.amount || 0);
-        if (amount <= 0) {
-          nextAmountErrors[sale.id] = "Amount is required.";
-        }
-        if (amount > sale.balance_amount) {
-          nextAmountErrors[sale.id] = "Cannot exceed balance.";
-        }
-      }
-    }
-
-    if (Object.keys(nextAmountErrors).length > 0) {
-      setAmountErrors(nextAmountErrors);
+    if (!editingPayment && Number(form.total_amount_paid || 0) <= 0) {
+      setError("Total Amount Paid must be greater than 0.");
       return;
     }
 
@@ -618,35 +552,68 @@ export function PaymentsPage() {
         return;
       }
 
-      const payload = selectedDrafts.map(({ sale, draft }) => ({
-        sales_record_id: sale.id,
-        payment_date: form.payment_date,
-        amount: Number(draft.amount || 0),
-        payment_method: form.payment_method,
-        reference_number:
-          form.payment_method === "CK" ? form.ck_number.trim() : null,
-        remarks,
-      }));
+      // Distribute total paid amount among selected sales
+      let remainingPaid = Number(form.total_amount_paid || 0);
+      const paymentPayload = [];
+      const saleUpdates = [];
 
-      const { error: insertError } = await supabase
-        .from("sales_payments")
-        .insert(payload);
-      if (insertError) throw new Error(insertError.message);
+      for (let i = 0; i < selectedDrafts.length; i++) {
+        const { sale } = selectedDrafts[i];
+        
+        let paymentForThisSale = 0;
+        
+        if (i === selectedDrafts.length - 1) {
+          // The last selected sale gets all the remaining paid amount, 
+          // including any overpayment (sobra).
+          paymentForThisSale = remainingPaid;
+        } else {
+          // Pay up to the balance amount of this sale
+          paymentForThisSale = Math.min(remainingPaid, sale.balance_amount);
+          if (paymentForThisSale < 0) {
+            paymentForThisSale = 0;
+          }
+        }
+        
+        remainingPaid -= paymentForThisSale;
 
-      await Promise.all(
-        selectedDrafts.map(({ sale, draft }) => {
-          const nextPaidAmount = sale.paid_amount + Number(draft.amount || 0);
-          const status =
-            nextPaidAmount >= sale.total_amount ? "paid" : "deposit";
-          return supabase
-            .from("sales_records")
-            .update({ payment_status: status })
-            .eq("id", sale.id);
-        }),
-      );
+        if (paymentForThisSale > 0) {
+          paymentPayload.push({
+            sales_record_id: sale.id,
+            payment_date: form.payment_date,
+            amount: paymentForThisSale,
+            payment_method: form.payment_method,
+            reference_number:
+              form.payment_method === "CK" ? form.ck_number.trim() : null,
+            remarks,
+          });
+
+          const nextPaidAmount = sale.paid_amount + paymentForThisSale;
+          const status = nextPaidAmount >= sale.total_amount ? "paid" : "deposit";
+          saleUpdates.push({
+            id: sale.id,
+            status,
+          });
+        }
+      }
+
+      if (paymentPayload.length > 0) {
+        const { error: insertError } = await supabase
+          .from("sales_payments")
+          .insert(paymentPayload);
+        if (insertError) throw new Error(insertError.message);
+
+        await Promise.all(
+          saleUpdates.map(({ id, status }) =>
+            supabase
+              .from("sales_records")
+              .update({ payment_status: status })
+              .eq("id", id),
+          ),
+        );
+      }
 
       setMessage(
-        `Saved ${payload.length} payment${payload.length === 1 ? "" : "s"}.`,
+        `Saved ${paymentPayload.length} payment${paymentPayload.length === 1 ? "" : "s"}.`,
       );
       setForm(emptyForm);
       setEditingPayment(null);
@@ -700,8 +667,6 @@ export function PaymentsPage() {
                     ...current,
                     payment_method: (value ?? "CASH") as PaymentMethod,
                     ck_number: value === "CK" ? current.ck_number : "",
-                    counter_date: value === "CK" ? current.counter_date : "",
-                    counter: value === "DEPOSIT" ? current.counter : "",
                   }));
                 }}
               />
@@ -732,6 +697,17 @@ export function PaymentsPage() {
                 }}
                 submitOnEnter={() => setTimeout(() => void savePayments(), 0)}
               />
+              <TextInput
+                label='Term'
+                placeholder='Optional description'
+                value={form.term}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    term: event.currentTarget.value,
+                  }))
+                }
+              />
               {form.payment_method === "CK" && (
                 <TextInput
                   label='CK No'
@@ -744,30 +720,6 @@ export function PaymentsPage() {
                       ck_number: event.currentTarget.value,
                     }));
                   }}
-                />
-              )}
-              {form.payment_method === "CK" && (
-                <DateShortcutInput
-                  label='Counter Date'
-                  value={form.counter_date}
-                  onChange={(val) =>
-                    setForm((current) => ({
-                      ...current,
-                      counter_date: val,
-                    }))
-                  }
-                />
-              )}
-              {form.payment_method === "DEPOSIT" && (
-                <TextInput
-                  label='Counter'
-                  value={form.counter}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      counter: event.currentTarget.value,
-                    }))
-                  }
                 />
               )}
               {editingPayment && (
@@ -784,6 +736,36 @@ export function PaymentsPage() {
                     }));
                   }}
                 />
+              )}
+              {!editingPayment && (
+                <Stack gap={4}>
+                  <NumberInput
+                    label="Total Amount Paid"
+                    min={0}
+                    value={form.total_amount_paid}
+                    onChange={(value) => {
+                      setForm((current) => ({
+                        ...current,
+                        total_amount_paid: Number(value) || "",
+                      }));
+                    }}
+                  />
+                  {selectedBalanceTotal > 0 &&
+                    form.total_amount_paid !== "" &&
+                    Number(form.total_amount_paid) !== selectedBalanceTotal && (
+                      <Group gap="xs" style={{ marginTop: 2 }}>
+                        {Number(form.total_amount_paid) - selectedBalanceTotal < 0 ? (
+                          <Badge color="red" variant="filled">
+                            Kulang ng {formatMoney(Math.abs(Number(form.total_amount_paid) - selectedBalanceTotal))}
+                          </Badge>
+                        ) : (
+                          <Badge color="green" variant="filled">
+                            Sobra ng {formatMoney(Number(form.total_amount_paid) - selectedBalanceTotal)}
+                          </Badge>
+                        )}
+                      </Group>
+                    )}
+                </Stack>
               )}
             </SimpleGrid>
 
@@ -820,7 +802,7 @@ export function PaymentsPage() {
               <Badge variant='light'>
                 {editingPayment
                   ? "Editing payment"
-                  : `Selected: ${selectedDrafts.length} | Amount: ${displayMoney(selectedTotal)}`}
+                  : `Selected: ${selectedDrafts.length} | Balance Total: ${displayMoney(selectedBalanceTotal)}`}
               </Badge>
             </Group>
           </Stack>
@@ -852,7 +834,12 @@ export function PaymentsPage() {
             checkedRowIds={selectedUnpaidRowIds}
             onCheckedRowIdsChange={handleUnpaidSelectionChange}
             renderCell={renderUnpaidCell}
-            contextMenuItems={[]}
+            contextMenuItems={["select_rows"]}
+            onSelectRowsClick={(selectedRows) => {
+              const nextSelected = new Set(selectedUnpaidRowIds);
+              selectedRows.forEach((row) => nextSelected.add(row.id));
+              handleUnpaidSelectionChange(nextSelected);
+            }}
           />
         </Stack>
       </Paper>

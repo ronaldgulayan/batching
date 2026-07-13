@@ -47,6 +47,8 @@ type SaleRow = {
   unit_price: number;
   total_amount: number;
   payment_status: string;
+  counter_date: string;
+  counter: string;
 };
 
 type SalesRecord = {
@@ -60,6 +62,7 @@ type SalesRecord = {
   unit_price: number;
   total_amount: number;
   payment_status: string;
+  remarks: string | null;
   customers?: { name: string } | { name: string }[] | null;
   concrete_designs?: { code: string } | { code: string }[] | null;
 };
@@ -73,6 +76,8 @@ type SaleForm = {
   project_site: string;
   cubic_volume: number | "";
   unit_price: number | "";
+  counter_date: string;
+  counter: string;
 };
 
 type BatchSaleDraft = SaleForm & {
@@ -90,6 +95,27 @@ const emptyForm: SaleForm = {
   project_site: "",
   cubic_volume: "",
   unit_price: "",
+  counter_date: "",
+  counter: "",
+};
+
+const remarkValue = (remarks: string | null, label: string) =>
+  remarks
+    ?.split("|")
+    .map((part) => part.trim())
+    .find((part) => part.toLowerCase().startsWith(`${label.toLowerCase()}:`))
+    ?.slice(label.length + 1)
+    .trim() ?? "";
+
+const buildRemarks = (counterDate: string, counter: string) => {
+  const parts = [];
+  if (counterDate) {
+    parts.push(`Counter Date: ${counterDate}`);
+  }
+  if (counter.trim()) {
+    parts.push(`Counter: ${counter.trim()}`);
+  }
+  return parts.join(" | ");
 };
 
 const relatedName = (value: SalesRecord["customers"]) =>
@@ -115,6 +141,8 @@ const saleColumns: ExcelColumn<SaleRow>[] = [
   { key: "client_name", label: "Client Name", width: 150, sortable: true },
   { key: "design", label: "Design", width: 140, sortable: true },
   { key: "site", label: "Site", width: 100, sortable: true },
+  { key: "counter_date", label: "Counter Date", type: "date", width: 110, sortable: true },
+  { key: "counter", label: "Counter", width: 100, sortable: true },
   {
     key: "cubic_volume",
     label: "Cubic",
@@ -153,6 +181,10 @@ export function SalesPage() {
     id: string;
     originalOrNumber: number;
   } | null>(null);
+  const [selectedSaleIds, setSelectedSaleIds] = useState<Set<string | number>>(new Set());
+  const [counterModalOpen, setCounterModalOpen] = useState(false);
+  const [counterTargetRows, setCounterTargetRows] = useState<SaleRow[]>([]);
+  const [counterDateValue, setCounterDateValue] = useState("");
   const [nextOrNumber, setNextOrNumber] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -196,6 +228,43 @@ export function SalesPage() {
         .includes(cleaned),
     );
   }, [rows, salesSearch]);
+
+  const handleCounterClick = (row: SaleRow, targetRows?: SaleRow[]) => {
+    const targets = targetRows && targetRows.length > 0 ? targetRows : [row];
+    setCounterTargetRows(targets);
+    setCounterDateValue(row.counter_date || today());
+    setCounterModalOpen(true);
+  };
+
+  async function saveCounterDateValue() {
+    if (counterTargetRows.length === 0) return;
+    setLoading(true);
+    setError("");
+    setMessage("");
+
+    try {
+      await Promise.all(
+        counterTargetRows.map(async (row) => {
+          const nextRemarks = buildRemarks(counterDateValue, row.counter);
+          const { error: updateError } = await supabase
+            .from("sales_records")
+            .update({ remarks: nextRemarks })
+            .eq("id", row.id);
+          if (updateError) throw new Error(updateError.message);
+        })
+      );
+
+      setMessage(`Counter Date updated successfully for ${counterTargetRows.length} record(s).`);
+      setCounterModalOpen(false);
+      setCounterTargetRows([]);
+      setSelectedSaleIds(new Set());
+      await loadRows();
+    } catch (saveErr) {
+      setError(saveErr instanceof Error ? saveErr.message : "Unable to save counter date.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function loadLookups() {
     const [
@@ -247,7 +316,7 @@ export function SalesPage() {
       const { data, error: loadError } = await supabase
         .from("sales_records")
         .select(
-          "id,sale_or_number,sale_date,customer_id,manual_customer_name,project_site,cubic_volume,unit_price,total_amount,payment_status,customers(name),concrete_designs(code)",
+          "id,sale_or_number,sale_date,customer_id,manual_customer_name,project_site,cubic_volume,unit_price,total_amount,payment_status,customers(name),concrete_designs(code),remarks",
         )
         .order("sale_or_number", { ascending: false })
         .limit(300);
@@ -279,6 +348,8 @@ export function SalesPage() {
           unit_price: Number(record.unit_price || 0),
           total_amount: Number(record.total_amount || 0),
           payment_status: record.payment_status,
+          counter_date: remarkValue(record.remarks, "Counter Date"),
+          counter: remarkValue(record.remarks, "Counter"),
         })),
       );
     } catch (loadError) {
@@ -330,6 +401,26 @@ export function SalesPage() {
 
     setSites((current) => [...current, { id: data.id, label: data.name }]);
     return data.name;
+  }
+
+  async function ensureDesignId(designLabel: string) {
+    const cleaned = designLabel.trim();
+    if (!cleaned) return null;
+
+    const existing = designs.find(
+      (design) => design.label.toLowerCase() === cleaned.toLowerCase(),
+    );
+    if (existing) return existing.id;
+
+    const { data, error: insertError } = await supabase
+      .from("concrete_designs")
+      .insert({ code: cleaned })
+      .select("id,code")
+      .single();
+    if (insertError) throw new Error(insertError.message);
+
+    setDesigns((current) => [...current, { id: data.id, label: data.code }]);
+    return data.id;
   }
 
   function designIdFromLabel(label: string) {
@@ -429,8 +520,6 @@ export function SalesPage() {
 
   function validateSaleDraft(draft: SaleForm, rowLabel = "Sale") {
     const orNumber = Number(draft.sale_or_number || 0);
-    const designId =
-      draft.concrete_design_id ?? designIdFromLabel(draft.design_label);
 
     const isKeepingEditedOrNumber =
       editingSale && orNumber === editingSale.originalOrNumber;
@@ -442,7 +531,7 @@ export function SalesPage() {
     if (
       !draft.sale_date ||
       !draft.client_name.trim() ||
-      !designId ||
+      !draft.design_label.trim() ||
       !draft.project_site.trim()
     ) {
       return `${rowLabel}: Date, Client Name, Design, Site, Cubic, and Price are required.`;
@@ -464,6 +553,8 @@ export function SalesPage() {
       project_site: row.site,
       cubic_volume: row.cubic_volume,
       unit_price: row.unit_price,
+      counter_date: row.counter_date,
+      counter: row.counter,
     });
     requestAnimationFrame(() => {
       window.scrollTo({
@@ -543,11 +634,13 @@ export function SalesPage() {
     try {
       const customerIds = new Map<string, string>();
       const siteNames = new Map<string, string>();
+      const designIds = new Map<string, string>();
 
       const payload = [];
       for (const draft of batchDrafts) {
         const customerKey = draft.client_name.trim().toLowerCase();
         const siteKey = draft.project_site.trim().toLowerCase();
+        const designKey = draft.design_label.trim().toLowerCase();
 
         let customerId = customerIds.get(customerKey);
         if (!customerId) {
@@ -563,17 +656,24 @@ export function SalesPage() {
           siteNames.set(siteKey, siteName);
         }
 
+        let designId = designIds.get(designKey);
+        if (!designId) {
+          designId = await ensureDesignId(draft.design_label);
+          if (!designId) throw new Error("Design is required.");
+          designIds.set(designKey, designId);
+        }
+
         payload.push({
           sale_or_number: Number(draft.sale_or_number || 0),
           sale_date: draft.sale_date,
           customer_id: customerId,
           manual_customer_name: null,
-          concrete_design_id:
-            draft.concrete_design_id ?? designIdFromLabel(draft.design_label),
+          concrete_design_id: designId,
           project_site: siteName,
           cubic_volume: Number(draft.cubic_volume || 0),
           unit_price: Number(draft.unit_price || 0),
           payment_status: "unpaid",
+          remarks: buildRemarks(draft.counter_date, draft.counter),
         });
       }
 
@@ -622,8 +722,6 @@ export function SalesPage() {
       return;
     }
 
-    const designId =
-      form.concrete_design_id ?? designIdFromLabel(form.design_label);
     setLoading(true);
     setError("");
     setMessage("");
@@ -633,6 +731,8 @@ export function SalesPage() {
       if (!customerId) throw new Error("Client Name is required.");
       const siteName = await ensureSiteName(form.project_site);
       if (!siteName) throw new Error("Site is required.");
+      const designId = await ensureDesignId(form.design_label);
+      if (!designId) throw new Error("Design is required.");
 
       const salePayload = {
         sale_or_number: orNumber,
@@ -643,6 +743,7 @@ export function SalesPage() {
         project_site: siteName,
         cubic_volume: Number(form.cubic_volume || 0),
         unit_price: Number(form.unit_price || 0),
+        remarks: buildRemarks(form.counter_date, form.counter),
       };
 
       const { error: insertError } = editingSale
@@ -777,6 +878,17 @@ export function SalesPage() {
                 thousandSeparator=","
                 decimalScale={2}
               />
+              <DateShortcutInput
+                label="Counter Date"
+                value={form.counter_date}
+                onChange={(val) =>
+                  setForm((current) => ({
+                    ...current,
+                    counter_date: val,
+                  }))
+                }
+                clearable={true}
+              />
             </SimpleGrid>
 
             <Group justify="space-between">
@@ -866,6 +978,8 @@ export function SalesPage() {
                         <Table.Th>Client Name</Table.Th>
                         <Table.Th>Design</Table.Th>
                         <Table.Th>Site</Table.Th>
+                        <Table.Th>Counter Date</Table.Th>
+                        <Table.Th>Counter</Table.Th>
                         <Table.Th>Cubic</Table.Th>
                         <Table.Th>Price</Table.Th>
                         <Table.Th>Total</Table.Th>
@@ -951,6 +1065,26 @@ export function SalesPage() {
                                 onValueChange={(value) =>
                                   updateBatchDraft(draft.id, {
                                     project_site: value,
+                                  })
+                                }
+                              />
+                            </Table.Td>
+                            <Table.Td>
+                              <DateShortcutInput
+                                value={draft.counter_date}
+                                onChange={(val) =>
+                                  updateBatchDraft(draft.id, {
+                                    counter_date: val,
+                                  })
+                                }
+                              />
+                            </Table.Td>
+                            <Table.Td>
+                              <TextInput
+                                value={draft.counter}
+                                onChange={(event) =>
+                                  updateBatchDraft(draft.id, {
+                                    counter: event.currentTarget.value,
                                   })
                                 }
                               />
@@ -1051,6 +1185,10 @@ export function SalesPage() {
         data={filteredRows}
         onEditClick={(row) => startEditSale(row)}
         onDeleteClick={(row) => deleteSale(row)}
+        selectedRowIds={selectedSaleIds}
+        onSelectionChange={setSelectedSaleIds}
+        contextMenuItems={["edit", "delete", "counter_date"]}
+        onCounterClick={handleCounterClick}
         renderRowActions={(row) => (
           <Group gap="xs" justify="center">
             <Button
@@ -1083,6 +1221,52 @@ export function SalesPage() {
           );
         }}
       />
+
+      <Modal
+        opened={counterModalOpen}
+        onClose={() => {
+          if (!loading) {
+            setCounterModalOpen(false);
+            setCounterTargetRows([]);
+          }
+        }}
+        title="Update Counter Date"
+        centered
+        closeOnClickOutside={!loading}
+        closeOnEscape={!loading}
+      >
+        <Stack gap="md">
+          <Badge variant="outline">
+            Updating counter date for {counterTargetRows.length} record(s)
+          </Badge>
+          <DateShortcutInput
+            label="Counter Date"
+            value={counterDateValue}
+            onChange={(val) => setCounterDateValue(val)}
+            disabled={loading}
+            clearable={true}
+          />
+          <Group justify="flex-end">
+            <Button
+              variant="light"
+              color="gray"
+              onClick={() => {
+                setCounterModalOpen(false);
+                setCounterTargetRows([]);
+              }}
+              disabled={loading}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={saveCounterDateValue}
+              loading={loading}
+            >
+              Save Counter Date
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </Stack>
   );
 }
