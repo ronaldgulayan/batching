@@ -144,24 +144,8 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
                 <Title order={1} style={{ fontSize: "28px", fontWeight: 800, letterSpacing: "-0.5px" }}>
                   Solid Batching
                 </Title>
-                <Text size="sm" c="dimmed" mt={4}>
-                  Enterprise Resource Planning System
-                </Text>
               </div>
             </Stack>
-
-            {/* Config badge */}
-            <Group justify="center">
-              {isSupabaseConfigured ? (
-                <Badge variant="light" color="blue" radius="sm">
-                  Connected to Supabase Auth
-                </Badge>
-              ) : (
-                <Badge variant="light" color="yellow" radius="sm">
-                  Demo Mode (Local Credentials)
-                </Badge>
-              )}
-            </Group>
 
             {/* Errors */}
             {error && (
