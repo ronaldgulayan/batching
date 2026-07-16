@@ -13,6 +13,7 @@ import {
   Table,
   Text,
   TextInput,
+  ThemeIcon,
   Title,
 } from "@mantine/core";
 import {
@@ -598,6 +599,7 @@ export function DashboardPage() {
   );
 }
 
+
 type MetricCardProps = {
   title: string;
   value: string;
@@ -609,17 +611,41 @@ function MetricCard({ title, value, detail, icon }: MetricCardProps) {
   return (
     <Paper
       withBorder
-      radius='sm'
-      p='md'
-      className='masterPanel'
+      p="lg"
+      className="masterPanel"
+      style={{
+        position: "relative",
+        overflow: "hidden",
+        cursor: "default",
+        border: "1px solid rgba(255, 255, 255, 0.08)",
+      }}
     >
-      <Group justify='space-between' align='flex-start'>
-        <div>
-          <Text c='dimmed' size='sm'>{title}</Text>
-          <Text fw={800} size='xl'>{value}</Text>
-          <Text c='dimmed' size='sm'>{detail}</Text>
-        </div>
-        {icon}
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          right: 0,
+          width: "90px",
+          height: "90px",
+          background: "radial-gradient(circle, rgba(37, 99, 235, 0.08) 0%, transparent 70%)",
+          pointerEvents: "none",
+        }}
+      />
+      <Group justify="space-between" align="flex-start">
+        <Stack gap="xs">
+          <Text c="dimmed" size="xs" fw={700} style={{ textTransform: "uppercase", letterSpacing: "1px" }}>
+            {title}
+          </Text>
+          <Text fw={800} size="xl" style={{ fontSize: "22px", color: "#ffffff", letterSpacing: "-0.5px" }}>
+            {value}
+          </Text>
+          <Text c="dimmed" size="xs">
+            {detail}
+          </Text>
+        </Stack>
+        <ThemeIcon size={42} radius="md" variant="light" color="blue" style={{ border: "1px solid rgba(37, 99, 235, 0.2)" }}>
+          {icon}
+        </ThemeIcon>
       </Group>
     </Paper>
   );
@@ -629,39 +655,43 @@ function LeaderCard({ title, rows }: { title: string; rows: LeaderItem[] }) {
   return (
     <Paper
       withBorder
-      radius='sm'
-      p='md'
-      className='masterPanel'
+      p="md"
+      className="masterPanel"
     >
-      <Stack gap='sm'>
-        <Group justify='space-between'>
-          <Text fw={700}>{title}</Text>
-          <Badge variant='light'>{rows.length}</Badge>
+      <Stack gap="sm">
+        <Group justify="space-between">
+          <Text fw={700} size="md">{title}</Text>
+          <Badge variant="light" color="blue">{rows.length}</Badge>
         </Group>
-        <Table withColumnBorders>
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th>Name</Table.Th>
-              <Table.Th>Count</Table.Th>
-              <Table.Th>Sales</Table.Th>
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {rows.map((row) => (
-              <Table.Tr key={row.label}>
-                <Table.Td>{row.label}</Table.Td>
-                <Table.Td>{row.count}</Table.Td>
-                <Table.Td>{displayMoney(row.amount)}</Table.Td>
-              </Table.Tr>
-            ))}
-            {!rows.length && (
+        <ScrollArea type="auto">
+          <Table verticalSpacing="xs" highlightOnHover>
+            <Table.Thead>
               <Table.Tr>
-                <Table.Td colSpan={3}>No data to display</Table.Td>
+                <Table.Th style={{ borderBottom: "1.5px solid rgba(255, 255, 255, 0.08)" }}>Name</Table.Th>
+                <Table.Th style={{ borderBottom: "1.5px solid rgba(255, 255, 255, 0.08)" }}>Count</Table.Th>
+                <Table.Th style={{ borderBottom: "1.5px solid rgba(255, 255, 255, 0.08)" }}>Sales</Table.Th>
               </Table.Tr>
-            )}
-          </Table.Tbody>
-        </Table>
+            </Table.Thead>
+            <Table.Tbody>
+              {rows.map((row) => (
+                <Table.Tr key={row.label}>
+                  <Table.Td style={{ fontWeight: 500 }}>{row.label}</Table.Td>
+                  <Table.Td>{row.count}</Table.Td>
+                  <Table.Td style={{ fontWeight: 600, color: "#60a5fa" }}>{displayMoney(row.amount)}</Table.Td>
+                </Table.Tr>
+              ))}
+              {!rows.length && (
+                <Table.Tr>
+                  <Table.Td colSpan={3} style={{ textAlign: "center", color: "rgba(255,255,255,0.3)" }}>
+                    No data to display
+                  </Table.Td>
+                </Table.Tr>
+              )}
+            </Table.Tbody>
+          </Table>
+        </ScrollArea>
       </Stack>
     </Paper>
   );
 }
+

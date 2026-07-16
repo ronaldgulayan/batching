@@ -99,6 +99,11 @@ export const navItems = [
     icon: Truck,
   },
   {
+    key: "suppliers" as const,
+    label: "Supplier",
+    icon: Landmark,
+  },
+  {
     key: "expenses" as const,
     label: "Expenses",
     icon: ClipboardList,
@@ -122,8 +127,13 @@ export const maintenanceNavItems = [
     icon: UsersRound,
   },
   {
-    key: "maintenance-suppliers" as const,
-    label: "Suppliers",
-    icon: Landmark,
+    key: "maintenance-graba-items" as const,
+    label: "Items",
+    icon: ClipboardList,
+  },
+  {
+    key: "maintenance-graba-trucks" as const,
+    label: "Trucks",
+    icon: Truck,
   },
 ];

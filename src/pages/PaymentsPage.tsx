@@ -1,26 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Alert,
   Badge,
   Button,
-  Checkbox,
   Group,
   NumberInput,
   Paper,
-  ScrollArea,
   Select,
   SimpleGrid,
   Stack,
-  Table,
   TextInput,
+  Text,
+  SegmentedControl,
 } from "@mantine/core";
-import { AlertCircle, Edit3, RefreshCw, Save, Trash2 } from "lucide-react";
-import { SuggestionTextInput } from "../components/SuggestionTextInput";
+import { AlertCircle, Edit3, RefreshCw, Save, Trash2, X } from "lucide-react";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 import { CustomExcelTable, type ExcelColumn } from "../components/CustomExcelTable";
 import { DateShortcutInput } from "../components/DateShortcutInput";
+import { SuggestionTextInput } from "../components/SuggestionTextInput";
 
-type PaymentMethod = "CASH" | "CK" | "ONLINE" | "DEPOSIT";
+type PaymentMethod = "CASH" | "CK";
 
 type PayableSale = {
   id: string;
@@ -42,6 +41,49 @@ type PaidSale = PayableSale & {
   term: string;
 };
 
+type PayableGraba = {
+  id: string;
+  graba_dr_number: string;
+  graba_date: string;
+  supplier_name: string;
+  items: string;
+  truck: string;
+  total_amount: number;
+  paid_amount: number;
+  balance_amount: number;
+};
+
+type PaidGraba = PayableGraba & {
+  payment_id: string;
+  payment_date: string;
+  payment_amount: number;
+  payment_method: string;
+  ck_number: string;
+  remarks: string;
+};
+
+type PayableSupplier = {
+  id: string;
+  dr_number: string;
+  transaction_date: string;
+  supplier_name: string;
+  item_name: string;
+  qty: number;
+  price: number;
+  total_amount: number;
+  paid_amount: number;
+  balance_amount: number;
+};
+
+type PaidSupplier = PayableSupplier & {
+  payment_id: string;
+  payment_date: string;
+  payment_amount: number;
+  ck_number: string;
+  po_number: string;
+  remarks: "Paid" | "Collect";
+};
+
 type PaymentDraft = {
   selected: boolean;
 };
@@ -53,6 +95,26 @@ type SalesPaymentRecord = {
   amount: number;
   payment_method: string;
   reference_number: string | null;
+  remarks: string | null;
+};
+
+type GrabaPaymentRecord = {
+  id: string;
+  graba_record_id: string;
+  payment_date: string;
+  amount: number;
+  payment_method: string;
+  reference_number: string | null;
+  remarks: string | null;
+};
+
+type SupplierPaymentRecord = {
+  id: string;
+  supplier_transaction_id: string;
+  payment_date: string;
+  amount: number;
+  ck_number: string | null;
+  po_number: string | null;
   remarks: string | null;
 };
 
@@ -69,6 +131,8 @@ type PaymentForm = {
   edit_amount: number | "";
   total_amount_paid: number | "";
   term: string;
+  remarks: string;
+  po_number: string;
 };
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -81,13 +145,13 @@ const emptyForm: PaymentForm = {
   edit_amount: "",
   total_amount_paid: "",
   term: "",
+  remarks: "Paid",
+  po_number: "",
 };
 
 const paymentMethods: { value: PaymentMethod; label: string }[] = [
   { value: "CASH", label: "CASH" },
   { value: "CK", label: "CK (Cheque)" },
-  { value: "ONLINE", label: "ONLINE" },
-  { value: "DEPOSIT", label: "DEPOSIT" },
 ];
 
 const displayMoney = (value: number) =>
@@ -114,21 +178,24 @@ function remarkValue(remarks: string | null, label: string) {
 }
 
 export function PaymentsPage() {
-  const formPanelRef = useRef<HTMLDivElement | null>(null);
-  const [payableSales, setPayableSales] = useState<PayableSale[]>([]);
-  const [paidSales, setPaidSales] = useState<PaidSale[]>([]);
-  const [paymentDrafts, setPaymentDrafts] = useState<
-    Record<string, PaymentDraft>
-  >({});
-  const [salesPeople, setSalesPeople] = useState<SalesPerson[]>([]);
-  const [form, setForm] = useState<PaymentForm>(emptyForm);
+  const [activeTab, setActiveTab] = useState<"sales" | "graba" | "supplier">("sales");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  // Validation errors
   const [paymentDateError, setPaymentDateError] = useState("");
   const [salesFieldError, setSalesFieldError] = useState("");
   const [ckNumberError, setCkNumberError] = useState("");
   const [editAmountError, setEditAmountError] = useState("");
-  const [amountErrors, setAmountErrors] = useState<Record<string, string>>({});
+
+  const [form, setForm] = useState<PaymentForm>(emptyForm);
+
+  // Sales State
+  const [payableSales, setPayableSales] = useState<PayableSale[]>([]);
+  const [paidSales, setPaidSales] = useState<PaidSale[]>([]);
+  const [selectedUnpaidRowIds, setSelectedUnpaidRowIds] = useState<Set<string | number>>(new Set());
+  const [salesPeople, setSalesPeople] = useState<SalesPerson[]>([]);
   const [editingPayment, setEditingPayment] = useState<{
     paymentId: string;
     saleId: string;
@@ -136,25 +203,68 @@ export function PaymentsPage() {
     totalAmount: number;
     paidAmount: number;
   } | null>(null);
-  const [message, setMessage] = useState("");
   const [unpaidSearch, setUnpaidSearch] = useState("");
   const [paidSearch, setPaidSearch] = useState("");
 
+  // Graba State
+  const [payableGraba, setPayableGraba] = useState<PayableGraba[]>([]);
+  const [paidGraba, setPaidGraba] = useState<PaidGraba[]>([]);
+  const [selectedUnpaidGrabaRowIds, setSelectedUnpaidGrabaRowIds] = useState<Set<string | number>>(new Set());
+  const [editingGrabaPayment, setEditingGrabaPayment] = useState<{
+    paymentId: string;
+    grabaRecordId: string;
+    oldAmount: number;
+    totalAmount: number;
+    paidAmount: number;
+  } | null>(null);
+  const [unpaidGrabaSearch, setUnpaidGrabaSearch] = useState("");
+  const [paidGrabaSearch, setPaidGrabaSearch] = useState("");
+
+  // Supplier State
+  const [payableSupplier, setPayableSupplier] = useState<PayableSupplier[]>([]);
+  const [paidSupplier, setPaidSupplier] = useState<PaidSupplier[]>([]);
+  const [selectedUnpaidSupplierRowIds, setSelectedUnpaidSupplierRowIds] = useState<Set<string | number>>(new Set());
+  const [editingSupplierPayment, setEditingSupplierPayment] = useState<{
+    paymentId: string;
+    supplierTransactionId: string;
+    oldAmount: number;
+    totalAmount: number;
+    paidAmount: number;
+  } | null>(null);
+  const [unpaidSupplierSearch, setUnpaidSupplierSearch] = useState("");
+  const [paidSupplierSearch, setPaidSupplierSearch] = useState("");
+
+  // Sales derivations
   const selectedDrafts = useMemo(
-    () =>
-      payableSales
-        .map((sale) => ({ sale, draft: paymentDrafts[sale.id] }))
-        .filter(({ draft }) => draft?.selected),
-    [payableSales, paymentDrafts],
+    () => payableSales.filter((sale) => selectedUnpaidRowIds.has(sale.id)),
+    [payableSales, selectedUnpaidRowIds]
   );
 
   const selectedBalanceTotal = useMemo(
-    () =>
-      selectedDrafts.reduce(
-        (sum, { sale }) => sum + sale.balance_amount,
-        0,
-      ),
-    [selectedDrafts],
+    () => selectedDrafts.reduce((sum, sale) => sum + sale.balance_amount, 0),
+    [selectedDrafts]
+  );
+
+  // Graba derivations
+  const selectedGrabaDrafts = useMemo(
+    () => payableGraba.filter((g) => selectedUnpaidGrabaRowIds.has(g.id)),
+    [payableGraba, selectedUnpaidGrabaRowIds]
+  );
+
+  const selectedGrabaBalanceTotal = useMemo(
+    () => selectedGrabaDrafts.reduce((sum, g) => sum + g.balance_amount, 0),
+    [selectedGrabaDrafts]
+  );
+
+  // Supplier derivations
+  const selectedSupplierDrafts = useMemo(
+    () => payableSupplier.filter((s) => selectedUnpaidSupplierRowIds.has(s.id)),
+    [payableSupplier, selectedUnpaidSupplierRowIds]
+  );
+
+  const selectedSupplierBalanceTotal = useMemo(
+    () => selectedSupplierDrafts.reduce((sum, s) => sum + s.balance_amount, 0),
+    [selectedSupplierDrafts]
   );
 
   function saleMatchesSearch(sale: PayableSale, searchValue: string) {
@@ -185,96 +295,181 @@ export function PaymentsPage() {
       .includes(cleaned);
   }
 
+  function grabaMatchesSearch(g: PayableGraba, searchValue: string) {
+    const cleaned = searchValue.trim().toLowerCase();
+    if (!cleaned) return true;
+    const paidDetail = g as Partial<PaidGraba>;
+
+    return [
+      `DR ${g.graba_dr_number}`,
+      g.graba_dr_number,
+      g.graba_date,
+      g.supplier_name,
+      g.items,
+      g.truck,
+      g.total_amount,
+      g.paid_amount,
+      g.balance_amount,
+      displayMoney(g.total_amount),
+      displayMoney(g.paid_amount),
+      displayMoney(g.balance_amount),
+      paidDetail.payment_date ?? "",
+      paidDetail.payment_amount ?? "",
+      paidDetail.payment_amount ? displayMoney(paidDetail.payment_amount) : "",
+      paidDetail.payment_method ?? "",
+      paidDetail.ck_number ?? "",
+      paidDetail.remarks ?? "",
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(cleaned);
+  }
+
+  function supplierMatchesSearch(s: PayableSupplier, searchValue: string) {
+    const cleaned = searchValue.trim().toLowerCase();
+    if (!cleaned) return true;
+    const paidDetail = s as Partial<PaidSupplier>;
+
+    return [
+      `DR ${s.dr_number}`,
+      s.dr_number,
+      s.transaction_date,
+      s.supplier_name,
+      s.item_name,
+      s.qty,
+      s.price,
+      s.total_amount,
+      s.paid_amount,
+      s.balance_amount,
+      displayMoney(s.total_amount),
+      displayMoney(s.paid_amount),
+      displayMoney(s.balance_amount),
+      paidDetail.payment_date ?? "",
+      paidDetail.payment_amount ?? "",
+      paidDetail.payment_amount ? displayMoney(paidDetail.payment_amount) : "",
+      paidDetail.ck_number ?? "",
+      paidDetail.po_number ?? "",
+      paidDetail.remarks ?? "",
+    ]
+      .join(" ")
+      .toLowerCase()
+      .includes(cleaned);
+  }
+
   const filteredPayableSales = useMemo(
     () => payableSales.filter((sale) => saleMatchesSearch(sale, unpaidSearch)),
-    [payableSales, unpaidSearch],
+    [payableSales, unpaidSearch]
   );
 
   const filteredPaidSales = useMemo(
     () => paidSales.filter((sale) => saleMatchesSearch(sale, paidSearch)),
-    [paidSales, paidSearch],
+    [paidSales, paidSearch]
+  );
+
+  const filteredPayableGraba = useMemo(
+    () => payableGraba.filter((g) => grabaMatchesSearch(g, unpaidGrabaSearch)),
+    [payableGraba, unpaidGrabaSearch]
+  );
+
+  const filteredPaidGraba = useMemo(
+    () => paidGraba.filter((g) => grabaMatchesSearch(g, paidGrabaSearch)),
+    [paidGraba, paidGrabaSearch]
+  );
+
+  const filteredPayableSupplier = useMemo(
+    () => payableSupplier.filter((s) => supplierMatchesSearch(s, unpaidSupplierSearch)),
+    [payableSupplier, unpaidSupplierSearch]
+  );
+
+  const filteredPaidSupplier = useMemo(
+    () => paidSupplier.filter((s) => supplierMatchesSearch(s, paidSupplierSearch)),
+    [paidSupplier, paidSupplierSearch]
   );
 
   const unpaidColumns = useMemo<ExcelColumn<PayableSale>[]>(
     () => [
-      { key: "sale_or_number", label: "OR", type: "number" },
-      { key: "sale_date", label: "Date", type: "date" },
-      { key: "customer_name", label: "Client", type: "text" },
-      { key: "total_amount", label: "Total", type: "number" },
-      { key: "paid_amount", label: "Paid", type: "number" },
-      { key: "balance_amount", label: "Balance", type: "number" },
+      { key: "sale_or_number", label: "OR", type: "number", width: 90 },
+      { key: "sale_date", label: "Date", type: "date", width: 120 },
+      { key: "customer_name", label: "Client Name", width: 220 },
+      { key: "total_amount", label: "Total Amount", type: "number", width: 150 },
+      { key: "paid_amount", label: "Paid", type: "number", width: 140 },
+      { key: "balance_amount", label: "Balance", type: "number", width: 150 },
     ],
-    [],
+    []
   );
-
-  const selectedUnpaidRowIds = useMemo(() => {
-    const ids = new Set<string | number>();
-    for (const [id, draft] of Object.entries(paymentDrafts)) {
-      if (draft.selected) {
-        ids.add(id);
-      }
-    }
-    return ids;
-  }, [paymentDrafts]);
-
-  const handleUnpaidSelectionChange = (newSelectedIds: Set<string | number>) => {
-    setPaymentDrafts((current) => {
-      const next = { ...current };
-      payableSales.forEach((sale) => {
-        const isSelected = newSelectedIds.has(sale.id);
-        next[sale.id] = {
-          ...next[sale.id],
-          selected: isSelected,
-        };
-      });
-      return next;
-    });
-
-    const newTotal = payableSales
-      .filter((sale) => newSelectedIds.has(sale.id))
-      .reduce((sum, sale) => sum + sale.balance_amount, 0);
-
-    setForm((current) => ({
-      ...current,
-      total_amount_paid: newTotal > 0 ? newTotal : "",
-    }));
-  };
-
-  const renderUnpaidCell = (row: PayableSale, column: ExcelColumn<PayableSale>) => {
-    if (column.key === "sale_or_number") {
-      return `OR ${row.sale_or_number}`;
-    }
-    return undefined;
-  };
 
   const paidColumns = useMemo<ExcelColumn<PaidSale>[]>(
     () => [
-      { key: "sale_or_number", label: "OR", type: "number" },
-      { key: "sale_date", label: "Date", type: "date" },
-      { key: "customer_name", label: "Client", type: "text" },
-      { key: "total_amount", label: "Total", type: "number" },
-      { key: "paid_amount", label: "Paid", type: "number" },
-      { key: "balance_amount", label: "Balance", type: "number" },
-      { key: "payment_date", label: "Payment Date", type: "date" },
-      { key: "payment_amount", label: "Amount", type: "number" },
-      { key: "payment_method", label: "Method", type: "text" },
-      { key: "ck_number", label: "CK No", type: "text" },
-      { key: "sales_person", label: "Sales", type: "text" },
-      { key: "term", label: "Term", type: "text" },
+      { key: "sale_or_number", label: "OR", type: "number", width: 90 },
+      { key: "sale_date", label: "Date", type: "date", width: 120 },
+      { key: "customer_name", label: "Client Name", width: 220 },
+      { key: "total_amount", label: "Total Amount", type: "number", width: 150 },
+      { key: "payment_amount", label: "Payment Amt", type: "number", width: 140 },
+      { key: "payment_method", label: "Method", width: 120 },
+      { key: "ck_number", label: "CK No.", width: 120 },
+      { key: "sales_person", label: "Sales Person", width: 180 },
+      { key: "term", label: "Term/Details", width: 220 },
+      { key: "payment_date", label: "Payment Date", type: "date", width: 130 },
     ],
-    [],
+    []
   );
 
-  const renderPaidCell = (row: PaidSale, column: ExcelColumn<PaidSale>) => {
-    if (column.key === "sale_or_number") {
-      return `OR ${row.sale_or_number}`;
-    }
-    if (column.key === "payment_amount") {
-      return row.payment_amount ? displayMoney(row.payment_amount) : "";
-    }
-    return undefined;
-  };
+  const unpaidGrabaColumns = useMemo<ExcelColumn<PayableGraba>[]>(
+    () => [
+      { key: "graba_dr_number", label: "DR", type: "text", width: 90 },
+      { key: "graba_date", label: "Date", type: "date", width: 120 },
+      { key: "supplier_name", label: "Supplier", width: 220 },
+      { key: "items", label: "Items", width: 160 },
+      { key: "truck", label: "Truck", width: 120 },
+      { key: "total_amount", label: "Total", type: "number", width: 140 },
+      { key: "paid_amount", label: "Paid", type: "number", width: 130 },
+      { key: "balance_amount", label: "Balance", type: "number", width: 140 },
+    ],
+    []
+  );
 
+  const paidGrabaColumns = useMemo<ExcelColumn<PaidGraba>[]>(
+    () => [
+      { key: "graba_dr_number", label: "DR", type: "text", width: 90 },
+      { key: "graba_date", label: "Date", type: "date", width: 120 },
+      { key: "supplier_name", label: "Supplier", width: 220 },
+      { key: "payment_amount", label: "Payment Amt", type: "number", width: 140 },
+      { key: "payment_method", label: "Method", width: 110 },
+      { key: "ck_number", label: "Cheque No", width: 110 },
+      { key: "remarks", label: "Remarks", width: 200 },
+      { key: "payment_date", label: "Payment Date", type: "date", width: 130 },
+    ],
+    []
+  );
+
+  const unpaidSupplierColumns = useMemo<ExcelColumn<PayableSupplier>[]>(
+    () => [
+      { key: "dr_number", label: "DR", type: "text", width: 90 },
+      { key: "transaction_date", label: "Date", type: "date", width: 120 },
+      { key: "supplier_name", label: "Supplier", width: 220 },
+      { key: "item_name", label: "Item", width: 160 },
+      { key: "qty", label: "Qty", type: "number", width: 90 },
+      { key: "price", label: "Price", type: "number", width: 110 },
+      { key: "total_amount", label: "Total", type: "number", width: 140 },
+      { key: "paid_amount", label: "Paid", type: "number", width: 130 },
+      { key: "balance_amount", label: "Balance", type: "number", width: 140 },
+    ],
+    []
+  );
+
+  const paidSupplierColumns = useMemo<ExcelColumn<PaidSupplier>[]>(
+    () => [
+      { key: "dr_number", label: "DR", type: "text", width: 90 },
+      { key: "transaction_date", label: "Date", type: "date", width: 120 },
+      { key: "supplier_name", label: "Supplier", width: 220 },
+      { key: "payment_amount", label: "Payment Amt", type: "number", width: 140 },
+      { key: "ck_number", label: "CK Number", width: 110 },
+      { key: "po_number", label: "PO No", width: 110 },
+      { key: "remarks", label: "Remarks", width: 110 },
+      { key: "payment_date", label: "Payment Date", type: "date", width: 130 },
+    ],
+    []
+  );
 
   async function loadRows() {
     if (!isSupabaseConfigured) return;
@@ -284,58 +479,57 @@ export function PaymentsPage() {
     setSalesFieldError("");
     setCkNumberError("");
     setEditAmountError("");
-    setAmountErrors({});
     setMessage("");
 
     try {
-      const [salesSummary, salesPaymentsResult, salesPeopleResult] =
-        await Promise.all([
-          supabase
-            .from("sales_billing_summary")
-            .select(
-              "id,sale_or_number,sale_date,customer_name,total_amount,paid_amount,balance_amount",
-            )
-            .order("sale_or_number", { ascending: false }),
-          supabase
-            .from("sales_payments")
-            .select(
-              "id,sales_record_id,payment_date,amount,payment_method,reference_number,remarks",
-            )
-            .order("payment_date", { ascending: false }),
-          supabase.from("sales_people").select("id,name").order("name"),
-        ]);
+      const [
+        salesSummary,
+        salesPaymentsResult,
+        salesPeopleResult,
+        grabaSummaryResult,
+        grabaPaymentsResult,
+        supplierSummaryResult,
+        supplierPaymentsResult,
+      ] = await Promise.all([
+        supabase
+          .from("sales_billing_summary")
+          .select("id,sale_or_number,sale_date,customer_name,total_amount,paid_amount,balance_amount")
+          .order("sale_or_number", { ascending: false }),
+        supabase
+          .from("sales_payments")
+          .select("id,sales_record_id,payment_date,amount,payment_method,reference_number,remarks")
+          .order("created_at", { ascending: false }),
+        supabase.from("sales_people").select("id,name").order("name"),
+        supabase.from("graba_summary").select("*").order("graba_dr_number", { ascending: false }),
+        supabase.from("graba_payments").select("*").order("created_at", { ascending: false }),
+        supabase.from("supplier_billing_summary").select("*").order("dr_number", { ascending: false }),
+        supabase.from("supplier_payments").select("*").order("created_at", { ascending: false }),
+      ]);
 
-      const firstError =
-        salesSummary.error ??
-        salesPaymentsResult.error ??
-        salesPeopleResult.error;
-      if (firstError) throw new Error(firstError.message);
+      if (salesSummary.error) throw new Error(salesSummary.error.message);
+      if (salesPaymentsResult.error) throw new Error(salesPaymentsResult.error.message);
+      if (salesPeopleResult.error) throw new Error(salesPeopleResult.error.message);
+      if (grabaSummaryResult.error) throw new Error(grabaSummaryResult.error.message);
+      if (grabaPaymentsResult.error) throw new Error(grabaPaymentsResult.error.message);
+      if (supplierSummaryResult.error) throw new Error(supplierSummaryResult.error.message);
+      if (supplierPaymentsResult.error) throw new Error(supplierPaymentsResult.error.message);
 
-      const sales = ((salesSummary.data ?? []) as unknown as PayableSale[]).map(
-        (sale) => ({
-          id: sale.id,
-          sale_or_number: Number(sale.sale_or_number || 0),
-          sale_date: sale.sale_date,
-          customer_name: sale.customer_name ?? "No client",
-          total_amount: Number(sale.total_amount || 0),
-          paid_amount: Number(sale.paid_amount || 0),
-          balance_amount: Number(sale.balance_amount || 0),
-        }),
-      );
+      // Process Sales
+      const sales = (salesSummary.data ?? []) as PayableSale[];
       const openSales = sales.filter((sale) => sale.balance_amount > 0);
       const closedSales = sales.filter((sale) => sale.balance_amount <= 0);
-      const latestPaymentBySaleId = new Map<string, SalesPaymentRecord>();
-      for (const payment of (salesPaymentsResult.data ??
-        []) as unknown as SalesPaymentRecord[]) {
-        if (!latestPaymentBySaleId.has(payment.sales_record_id)) {
-          latestPaymentBySaleId.set(payment.sales_record_id, payment);
+
+      const latestSalesPaymentById = new Map<string, SalesPaymentRecord>();
+      for (const payment of (salesPaymentsResult.data ?? []) as SalesPaymentRecord[]) {
+        if (!latestSalesPaymentById.has(payment.sales_record_id)) {
+          latestSalesPaymentById.set(payment.sales_record_id, payment);
         }
       }
 
       setPayableSales(openSales);
       setPaidSales(
         closedSales.map((sale) => {
-          const payment = latestPaymentBySaleId.get(sale.id);
+          const payment = latestSalesPaymentById.get(sale.id);
           const method = payment?.payment_method ?? "";
 
           return {
@@ -348,123 +542,292 @@ export function PaymentsPage() {
             sales_person: remarkValue(payment?.remarks ?? null, "Sales"),
             term: remarkValue(payment?.remarks ?? null, "Term"),
           };
-        }),
+        })
       );
-      setPaymentDrafts((current) => {
-        const nextDrafts: Record<string, PaymentDraft> = {};
-        for (const sale of openSales) {
-          nextDrafts[sale.id] = current[sale.id] ?? {
-            selected: false,
-          };
+
+      // Process Graba
+      const grabas = ((grabaSummaryResult.data ?? []) as unknown as PayableGraba[]).map(
+        (g) => ({
+          id: g.id,
+          graba_dr_number: g.graba_dr_number ? String(g.graba_dr_number) : "",
+          graba_date: g.graba_date,
+          supplier_name: g.supplier_name ?? "No supplier",
+          items: g.items ?? "",
+          truck: g.truck ?? "",
+          total_amount: Number(g.total_amount || 0),
+          paid_amount: Number(g.paid_amount || 0),
+          balance_amount: Number(g.balance_amount || 0),
+        })
+      );
+      const openGraba = grabas.filter((g) => g.balance_amount > 0);
+      const closedGraba = grabas.filter((g) => g.balance_amount <= 0);
+      const latestGrabaPaymentById = new Map<string, GrabaPaymentRecord>();
+      for (const payment of (grabaPaymentsResult.data ?? []) as unknown as GrabaPaymentRecord[]) {
+        if (!latestGrabaPaymentById.has(payment.graba_record_id)) {
+          latestGrabaPaymentById.set(payment.graba_record_id, payment);
         }
-        return nextDrafts;
-      });
+      }
+
+      setPayableGraba(openGraba);
+      setPaidGraba(
+        closedGraba.map((g) => {
+          const payment = latestGrabaPaymentById.get(g.id);
+          const method = payment?.payment_method ?? "";
+          return {
+            ...g,
+            payment_id: payment?.id ?? "",
+            payment_date: payment?.payment_date ?? "",
+            payment_amount: Number(payment?.amount || 0),
+            payment_method: method,
+            ck_number: method === "CK" ? (payment?.reference_number ?? "") : "",
+            remarks: method.toUpperCase() === "CASH" ? "Counter" : method.toUpperCase() === "CK" ? "Paid" : "",
+          };
+        })
+      );
+
+      // Process Supplier Transactions
+      const supplierTrans = ((supplierSummaryResult.data ?? []) as unknown as PayableSupplier[]).map(
+        (s) => ({
+          id: s.id,
+          dr_number: s.dr_number ? String(s.dr_number) : "",
+          transaction_date: s.transaction_date,
+          supplier_name: s.supplier_name ?? "",
+          item_name: s.item_name ?? "",
+          qty: Number(s.qty || 0),
+          price: Number(s.price || 0),
+          total_amount: Number(s.total_amount || 0),
+          paid_amount: Number(s.paid_amount || 0),
+          balance_amount: Number(s.balance_amount || 0),
+        })
+      );
+      const openSupplier = supplierTrans.filter((s) => s.balance_amount > 0);
+      const closedSupplier = supplierTrans.filter((s) => s.balance_amount <= 0);
+      const latestSupplierPaymentById = new Map<string, SupplierPaymentRecord>();
+      for (const payment of (supplierPaymentsResult.data ?? []) as unknown as SupplierPaymentRecord[]) {
+        if (!latestSupplierPaymentById.has(payment.supplier_transaction_id)) {
+          latestSupplierPaymentById.set(payment.supplier_transaction_id, payment);
+        }
+      }
+
+      setPayableSupplier(openSupplier);
+      setPaidSupplier(
+        closedSupplier.map((s) => {
+          const payment = latestSupplierPaymentById.get(s.id);
+          return {
+            ...s,
+            payment_id: payment?.id ?? "",
+            payment_date: payment?.payment_date ?? "",
+            payment_amount: Number(payment?.amount || 0),
+            ck_number: payment?.ck_number ?? "",
+            po_number: payment?.po_number ?? "",
+            remarks: (payment?.remarks as "Paid" | "Collect") ?? "Paid",
+          };
+        })
+      );
 
       setSalesPeople(
         ((salesPeopleResult.data ?? []) as { id: string; name: string }[]).map(
           (person) => ({
             id: person.id,
             label: person.name,
-          }),
-        ),
+          })
+        )
       );
     } catch (loadError) {
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : "Unable to load payments.",
-      );
+      setError(loadError instanceof Error ? loadError.message : "Unable to load data.");
     } finally {
       setLoading(false);
     }
   }
 
-  function startEditPayment(sale: PaidSale) {
-    if (!sale.payment_id) return;
-
+  function startEditSalesPayment(row: PaidSale) {
     setEditingPayment({
-      paymentId: sale.payment_id,
-      saleId: sale.id,
-      oldAmount: sale.payment_amount,
-      totalAmount: sale.total_amount,
-      paidAmount: sale.paid_amount,
+      paymentId: row.payment_id,
+      saleId: row.id,
+      oldAmount: row.payment_amount,
+      totalAmount: row.total_amount,
+      paidAmount: row.paid_amount,
     });
-    setError("");
-    setMessage("");
-    setPaymentDateError("");
-    setSalesFieldError("");
-    setCkNumberError("");
-    setEditAmountError("");
     setForm({
-      payment_date: sale.payment_date || today(),
-      payment_method: (sale.payment_method || "CASH") as PaymentMethod,
-      sales_person: sale.sales_person,
-      ck_number: sale.ck_number,
-      edit_amount: sale.payment_amount || "",
+      payment_date: row.payment_date,
+      payment_method: row.payment_method as PaymentMethod,
+      sales_person: row.sales_person,
+      ck_number: row.ck_number,
+      edit_amount: row.payment_amount,
       total_amount_paid: "",
-      term: sale.term || "",
+      term: row.term,
+      remarks: "",
+      po_number: "",
     });
-    requestAnimationFrame(() => {
-      window.scrollTo({
-        top: 0,
-        behavior: "smooth",
-      });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function startEditGrabaPayment(row: PaidGraba) {
+    setEditingGrabaPayment({
+      paymentId: row.payment_id,
+      grabaRecordId: row.id,
+      oldAmount: row.payment_amount,
+      totalAmount: row.total_amount,
+      paidAmount: row.paid_amount,
     });
+    setForm({
+      payment_date: row.payment_date,
+      payment_method: row.payment_method as PaymentMethod,
+      sales_person: "",
+      ck_number: row.ck_number,
+      edit_amount: row.payment_amount,
+      total_amount_paid: "",
+      term: "",
+      remarks: "",
+      po_number: "",
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function startEditSupplierPayment(row: PaidSupplier) {
+    setEditingSupplierPayment({
+      paymentId: row.payment_id,
+      supplierTransactionId: row.id,
+      oldAmount: row.payment_amount,
+      totalAmount: row.total_amount,
+      paidAmount: row.paid_amount,
+    });
+    setForm({
+      payment_date: row.payment_date,
+      payment_method: "CK",
+      sales_person: "",
+      ck_number: row.ck_number,
+      edit_amount: row.payment_amount,
+      total_amount_paid: "",
+      term: "",
+      remarks: row.remarks,
+      po_number: row.po_number,
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function cancelEditPayment() {
     setEditingPayment(null);
-    setError("");
-    setMessage("");
-    setPaymentDateError("");
-    setSalesFieldError("");
-    setCkNumberError("");
-    setEditAmountError("");
+    setEditingGrabaPayment(null);
+    setEditingSupplierPayment(null);
     setForm(emptyForm);
   }
 
-  async function deletePayment(sale: PaidSale) {
-    if (!sale.payment_id) return;
-    if (!window.confirm('Are you sure you want to delete this payment? This will mark the sale back as unpaid.')) {
-      return;
-    }
+  async function deleteSalesPayment(row: PaidSale) {
+    if (!window.confirm("Are you sure you want to delete this payment?")) return;
     setLoading(true);
     setError("");
     setMessage("");
 
-    const { error: deleteError } = await supabase
-      .from("sales_payments")
-      .delete()
-      .eq("id", sale.payment_id);
+    try {
+      const { error: deleteError } = await supabase
+        .from("sales_payments")
+        .delete()
+        .eq("id", row.payment_id);
+      if (deleteError) throw new Error(deleteError.message);
 
-    setLoading(false);
+      const nextPaidAmount = row.paid_amount - row.payment_amount;
+      const status = nextPaidAmount >= row.total_amount ? "paid" : nextPaidAmount > 0 ? "deposit" : "unpaid";
+      const { error: statusError } = await supabase
+        .from("sales_records")
+        .update({ payment_status: status })
+        .eq("id", row.id);
+      if (statusError) throw new Error(statusError.message);
 
-    if (deleteError) {
-      setError(deleteError.message);
-      return;
+      setMessage("Payment deleted successfully.");
+      await loadRows();
+    } catch (err: any) {
+      setError(err.message || "Failed to delete payment.");
+    } finally {
+      setLoading(false);
     }
-
-    setMessage("Payment deleted successfully.");
-    if (editingPayment?.paymentId === sale.payment_id) {
-      cancelEditPayment();
-    }
-    await loadRows();
   }
 
-  function buildRemarks(termOverride?: string) {
+  async function deleteGrabaPayment(row: PaidGraba) {
+    if (!window.confirm("Are you sure you want to delete this payment?")) return;
+    setLoading(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const { error: deleteError } = await supabase
+        .from("graba_payments")
+        .delete()
+        .eq("id", row.payment_id);
+      if (deleteError) throw new Error(deleteError.message);
+
+      const nextPaidAmount = row.paid_amount - row.payment_amount;
+      const status = nextPaidAmount >= row.total_amount ? "paid" : nextPaidAmount > 0 ? "deposit" : "unpaid";
+      const { error: statusError } = await supabase
+        .from("graba_records")
+        .update({ payment_status: status })
+        .eq("id", row.id);
+      if (statusError) throw new Error(statusError.message);
+
+      setMessage("Payment deleted successfully.");
+      await loadRows();
+    } catch (err: any) {
+      setError(err.message || "Failed to delete payment.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function deleteSupplierPayment(row: PaidSupplier) {
+    if (!window.confirm("Are you sure you want to delete this payment?")) return;
+    setLoading(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const { error: deleteError } = await supabase
+        .from("supplier_payments")
+        .delete()
+        .eq("id", row.payment_id);
+      if (deleteError) throw new Error(deleteError.message);
+
+      const nextPaidAmount = row.paid_amount - row.payment_amount;
+      const status = nextPaidAmount >= row.total_amount ? "paid" : nextPaidAmount > 0 ? "deposit" : "unpaid";
+      const { error: statusError } = await supabase
+        .from("supplier_transactions")
+        .update({ payment_status: status })
+        .eq("id", row.id);
+      if (statusError) throw new Error(statusError.message);
+
+      setMessage("Payment deleted successfully.");
+      await loadRows();
+    } catch (err: any) {
+      setError(err.message || "Failed to delete payment.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function buildRemarks() {
     const parts = [];
-    const salesPerson = form.sales_person.trim();
-    if (salesPerson) parts.push(`Sales: ${salesPerson}`);
-    
-    const term = termOverride !== undefined ? termOverride : form.term.trim();
-    if (term) parts.push(`Term: ${term}`);
-    
+    if (form.sales_person.trim()) {
+      parts.push(`Sales: ${form.sales_person.trim()}`);
+    }
+    if (form.term.trim()) {
+      parts.push(`Term: ${form.term.trim()}`);
+    }
     return parts.join(" | ");
   }
 
-  async function savePayments() {
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    if (activeTab === "sales") {
+      await saveSalesPayments();
+    } else if (activeTab === "graba") {
+      await saveGrabaPayments();
+    } else {
+      await saveSupplierPayments();
+    }
+  }
+
+  async function saveSalesPayments() {
     if (!isSupabaseConfigured) {
-      setError("Supabase credentials are missing from .env.");
+      setError("Supabase credentials are missing.");
       return;
     }
 
@@ -473,107 +836,85 @@ export function PaymentsPage() {
     setSalesFieldError("");
     setCkNumberError("");
     setEditAmountError("");
-    setAmountErrors({});
 
     let hasFieldError = false;
-
     if (!form.payment_date) {
       setPaymentDateError("Payment Date is required.");
       hasFieldError = true;
     }
-
     if (!form.sales_person.trim()) {
-      setSalesFieldError("Sales is required.");
+      setSalesFieldError("Sales Person is required.");
       hasFieldError = true;
     }
-
     if (form.payment_method === "CK" && !form.ck_number.trim()) {
       setCkNumberError("CK No is required.");
       hasFieldError = true;
     }
-
     if (editingPayment && Number(form.edit_amount || 0) <= 0) {
       setEditAmountError("Amount is required.");
       hasFieldError = true;
     }
 
-    if (hasFieldError) {
-      return;
-    }
+    if (hasFieldError) return;
 
     if (!editingPayment && selectedDrafts.length === 0) {
       setError("Select at least one OR to pay.");
       return;
     }
-
     if (!editingPayment && Number(form.total_amount_paid || 0) <= 0) {
       setError("Total Amount Paid must be greater than 0.");
       return;
     }
 
     setLoading(true);
-    setError("");
-    setSalesFieldError("");
-    setMessage("");
 
     try {
-      const remarks = buildRemarks();
+      const remarksVal = buildRemarks();
+
       if (editingPayment) {
         const amount = Number(form.edit_amount || 0);
-        const paymentRecord = {
-          payment_date: form.payment_date,
-          amount,
-          payment_method: form.payment_method,
-          reference_number:
-            form.payment_method === "CK" ? form.ck_number.trim() : null,
-          remarks,
-        };
-
         const { error: updateError } = await supabase
           .from("sales_payments")
-          .update(paymentRecord)
+          .update({
+            payment_date: form.payment_date,
+            amount,
+            payment_method: form.payment_method,
+            reference_number: form.payment_method === "CK" ? form.ck_number.trim() : null,
+            remarks: remarksVal,
+          })
           .eq("id", editingPayment.paymentId);
         if (updateError) throw new Error(updateError.message);
 
-        const nextPaidAmount =
-          editingPayment.paidAmount - editingPayment.oldAmount + amount;
-        const status =
-          nextPaidAmount >= editingPayment.totalAmount ? "paid" : "deposit";
+        const nextPaidAmount = editingPayment.paidAmount - editingPayment.oldAmount + amount;
+        const status = nextPaidAmount >= editingPayment.totalAmount ? "paid" : nextPaidAmount > 0 ? "deposit" : "unpaid";
         const { error: statusError } = await supabase
           .from("sales_records")
           .update({ payment_status: status })
           .eq("id", editingPayment.saleId);
         if (statusError) throw new Error(statusError.message);
 
-        setMessage("Payment updated.");
+        setMessage("Payment updated successfully.");
         setEditingPayment(null);
         setForm(emptyForm);
         await loadRows();
         return;
       }
 
-      // Distribute total paid amount among selected sales
+      // Batch save
       let remainingPaid = Number(form.total_amount_paid || 0);
       const paymentPayload = [];
       const saleUpdates = [];
 
       for (let i = 0; i < selectedDrafts.length; i++) {
-        const { sale } = selectedDrafts[i];
-        
+        const sale = selectedDrafts[i];
         let paymentForThisSale = 0;
-        
+
         if (i === selectedDrafts.length - 1) {
-          // The last selected sale gets all the remaining paid amount, 
-          // including any overpayment (sobra).
           paymentForThisSale = remainingPaid;
         } else {
-          // Pay up to the balance amount of this sale
           paymentForThisSale = Math.min(remainingPaid, sale.balance_amount);
-          if (paymentForThisSale < 0) {
-            paymentForThisSale = 0;
-          }
+          if (paymentForThisSale < 0) paymentForThisSale = 0;
         }
-        
         remainingPaid -= paymentForThisSale;
 
         if (paymentForThisSale > 0) {
@@ -582,185 +923,506 @@ export function PaymentsPage() {
             payment_date: form.payment_date,
             amount: paymentForThisSale,
             payment_method: form.payment_method,
-            reference_number:
-              form.payment_method === "CK" ? form.ck_number.trim() : null,
-            remarks,
+            reference_number: form.payment_method === "CK" ? form.ck_number.trim() : null,
+            remarks: remarksVal,
           });
 
           const nextPaidAmount = sale.paid_amount + paymentForThisSale;
           const status = nextPaidAmount >= sale.total_amount ? "paid" : "deposit";
-          saleUpdates.push({
-            id: sale.id,
-            status,
-          });
+          saleUpdates.push({ id: sale.id, status });
         }
       }
 
       if (paymentPayload.length > 0) {
-        const { error: insertError } = await supabase
-          .from("sales_payments")
-          .insert(paymentPayload);
+        const { error: insertError } = await supabase.from("sales_payments").insert(paymentPayload);
         if (insertError) throw new Error(insertError.message);
 
-        await Promise.all(
-          saleUpdates.map(({ id, status }) =>
-            supabase
-              .from("sales_records")
-              .update({ payment_status: status })
-              .eq("id", id),
-          ),
-        );
-      }
+        for (const update of saleUpdates) {
+          await supabase.from("sales_records").update({ payment_status: update.status }).eq("id", update.id);
+        }
 
-      setMessage(
-        `Saved ${paymentPayload.length} payment${paymentPayload.length === 1 ? "" : "s"}.`,
-      );
-      setForm(emptyForm);
-      setEditingPayment(null);
-      setPaymentDateError("");
-      setSalesFieldError("");
-      setCkNumberError("");
-      setEditAmountError("");
-      setAmountErrors({});
-      await loadRows();
-    } catch (saveError) {
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : "Unable to save payment.",
-      );
+        setMessage("Payments saved successfully.");
+        setSelectedUnpaidRowIds(new Set());
+        setForm(emptyForm);
+        await loadRows();
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to save payments.");
     } finally {
       setLoading(false);
     }
+  }
+
+  async function saveGrabaPayments() {
+    if (!isSupabaseConfigured) {
+      setError("Supabase credentials are missing.");
+      return;
+    }
+
+    setError("");
+    setPaymentDateError("");
+    setCkNumberError("");
+    setEditAmountError("");
+
+    let hasFieldError = false;
+    if (!form.payment_date) {
+      setPaymentDateError("Payment Date is required.");
+      hasFieldError = true;
+    }
+    if (form.payment_method === "CK" && !form.ck_number.trim()) {
+      setCkNumberError("CK No is required.");
+      hasFieldError = true;
+    }
+    if (editingGrabaPayment && Number(form.edit_amount || 0) <= 0) {
+      setEditAmountError("Amount is required.");
+      hasFieldError = true;
+    }
+
+    if (hasFieldError) return;
+
+    if (!editingGrabaPayment && selectedGrabaDrafts.length === 0) {
+      setError("Select at least one DR to pay.");
+      return;
+    }
+    if (!editingGrabaPayment && Number(form.total_amount_paid || 0) <= 0) {
+      setError("Total Amount Paid must be greater than 0.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      if (editingGrabaPayment) {
+        const amount = Number(form.edit_amount || 0);
+        const { error: updateError } = await supabase
+          .from("graba_payments")
+          .update({
+            payment_date: form.payment_date,
+            amount,
+            payment_method: form.payment_method,
+            reference_number: form.payment_method === "CK" ? form.ck_number.trim() : null,
+            remarks: null,
+          })
+          .eq("id", editingGrabaPayment.paymentId);
+        if (updateError) throw new Error(updateError.message);
+
+        const nextPaidAmount = editingGrabaPayment.paidAmount - editingGrabaPayment.oldAmount + amount;
+        const status = nextPaidAmount >= editingGrabaPayment.totalAmount ? "paid" : nextPaidAmount > 0 ? "deposit" : "unpaid";
+        const { error: statusError } = await supabase
+          .from("graba_records")
+          .update({ payment_status: status })
+          .eq("id", editingGrabaPayment.grabaRecordId);
+        if (statusError) throw new Error(statusError.message);
+
+        setMessage("Graba payment updated successfully.");
+        setEditingGrabaPayment(null);
+        setForm(emptyForm);
+        await loadRows();
+        return;
+      }
+
+      // Batch save for Graba
+      let remainingPaid = Number(form.total_amount_paid || 0);
+      const paymentPayload = [];
+      const grabaUpdates = [];
+
+      for (let i = 0; i < selectedGrabaDrafts.length; i++) {
+        const g = selectedGrabaDrafts[i];
+        let paymentForThisGraba = 0;
+
+        if (i === selectedGrabaDrafts.length - 1) {
+          paymentForThisGraba = remainingPaid;
+        } else {
+          paymentForThisGraba = Math.min(remainingPaid, g.balance_amount);
+          if (paymentForThisGraba < 0) paymentForThisGraba = 0;
+        }
+        remainingPaid -= paymentForThisGraba;
+
+        if (paymentForThisGraba > 0) {
+          paymentPayload.push({
+            graba_record_id: g.id,
+            payment_date: form.payment_date,
+            amount: paymentForThisGraba,
+            payment_method: form.payment_method,
+            reference_number: form.payment_method === "CK" ? form.ck_number.trim() : null,
+            remarks: null,
+          });
+
+          const nextPaidAmount = g.paid_amount + paymentForThisGraba;
+          const status = nextPaidAmount >= g.total_amount ? "paid" : "deposit";
+          grabaUpdates.push({ id: g.id, status });
+        }
+      }
+
+      if (paymentPayload.length > 0) {
+        const { error: insertError } = await supabase.from("graba_payments").insert(paymentPayload);
+        if (insertError) throw new Error(insertError.message);
+
+        for (const update of grabaUpdates) {
+          await supabase.from("graba_records").update({ payment_status: update.status }).eq("id", update.id);
+        }
+
+        setMessage("Graba payments saved successfully.");
+        setSelectedUnpaidGrabaRowIds(new Set());
+        setForm(emptyForm);
+        await loadRows();
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to save Graba payments.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveSupplierPayments() {
+    if (!isSupabaseConfigured) {
+      setError("Supabase credentials are missing.");
+      return;
+    }
+
+    setError("");
+    setPaymentDateError("");
+    setEditAmountError("");
+
+    let hasFieldError = false;
+    if (!form.payment_date) {
+      setPaymentDateError("Payment Date is required.");
+      hasFieldError = true;
+    }
+    if (editingSupplierPayment && Number(form.edit_amount || 0) <= 0) {
+      setEditAmountError("Amount is required.");
+      hasFieldError = true;
+    }
+
+    if (hasFieldError) return;
+
+    if (!editingSupplierPayment && selectedSupplierDrafts.length === 0) {
+      setError("Select at least one transaction to pay.");
+      return;
+    }
+    if (!editingSupplierPayment && Number(form.total_amount_paid || 0) <= 0) {
+      setError("Total Amount Paid must be greater than 0.");
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      if (editingSupplierPayment) {
+        const amount = Number(form.edit_amount || 0);
+        const { error: updateError } = await supabase
+          .from("supplier_payments")
+          .update({
+            payment_date: form.payment_date,
+            amount,
+            ck_number: form.ck_number.trim() || null,
+            po_number: form.po_number.trim() || null,
+            remarks: form.remarks,
+          })
+          .eq("id", editingSupplierPayment.paymentId);
+        if (updateError) throw new Error(updateError.message);
+
+        const nextPaidAmount = editingSupplierPayment.paidAmount - editingSupplierPayment.oldAmount + amount;
+        const status = nextPaidAmount >= editingSupplierPayment.totalAmount ? "paid" : nextPaidAmount > 0 ? "deposit" : "unpaid";
+        const { error: statusError } = await supabase
+          .from("supplier_transactions")
+          .update({ payment_status: status })
+          .eq("id", editingSupplierPayment.supplierTransactionId);
+        if (statusError) throw new Error(statusError.message);
+
+        setMessage("Payment updated successfully.");
+        setEditingSupplierPayment(null);
+        setForm(emptyForm);
+        await loadRows();
+        return;
+      }
+
+      // Batch save for Supplier
+      let remainingPaid = Number(form.total_amount_paid || 0);
+      const paymentPayload = [];
+      const supplierUpdates = [];
+
+      for (let i = 0; i < selectedSupplierDrafts.length; i++) {
+        const s = selectedSupplierDrafts[i];
+        let paymentForThisSupplier = 0;
+
+        if (i === selectedSupplierDrafts.length - 1) {
+          paymentForThisSupplier = remainingPaid;
+        } else {
+          paymentForThisSupplier = Math.min(remainingPaid, s.balance_amount);
+          if (paymentForThisSupplier < 0) paymentForThisSupplier = 0;
+        }
+        remainingPaid -= paymentForThisSupplier;
+
+        if (paymentForThisSupplier > 0) {
+          paymentPayload.push({
+            supplier_transaction_id: s.id,
+            payment_date: form.payment_date,
+            amount: paymentForThisSupplier,
+            ck_number: form.ck_number.trim() || null,
+            po_number: form.po_number.trim() || null,
+            remarks: form.remarks,
+          });
+
+          const nextPaidAmount = s.paid_amount + paymentForThisSupplier;
+          const status = nextPaidAmount >= s.total_amount ? "paid" : "deposit";
+          supplierUpdates.push({ id: s.id, status });
+        }
+      }
+
+      if (paymentPayload.length > 0) {
+        const { error: insertError } = await supabase.from("supplier_payments").insert(paymentPayload);
+        if (insertError) throw new Error(insertError.message);
+
+        for (const update of supplierUpdates) {
+          await supabase.from("supplier_transactions").update({ payment_status: update.status }).eq("id", update.id);
+        }
+
+        setMessage("Supplier payments saved successfully.");
+        setSelectedUnpaidSupplierRowIds(new Set());
+        setForm(emptyForm);
+        await loadRows();
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to save payments.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleUnpaidSelectionChange(nextSelected: Set<string | number>) {
+    setSelectedUnpaidRowIds(nextSelected);
+  }
+
+  function handleUnpaidGrabaSelectionChange(nextSelected: Set<string | number>) {
+    setSelectedUnpaidGrabaRowIds(nextSelected);
+  }
+
+  function handleUnpaidSupplierSelectionChange(nextSelected: Set<string | number>) {
+    setSelectedUnpaidSupplierRowIds(nextSelected);
+  }
+
+  function renderUnpaidCell(row: PayableSale, column: ExcelColumn<PayableSale>) {
+    if (column.key === "balance_amount") {
+      return (
+        <div className="cell-right" style={{ fontWeight: 600, color: "#f87171" }}>
+          {displayMoney(row.balance_amount)}
+        </div>
+      );
+    }
+    return undefined;
+  }
+
+  function renderUnpaidGrabaCell(row: PayableGraba, column: ExcelColumn<PayableGraba>) {
+    if (column.key === "balance_amount") {
+      return (
+        <div className="cell-right" style={{ fontWeight: 600, color: "#f87171" }}>
+          {displayMoney(row.balance_amount)}
+        </div>
+      );
+    }
+    return undefined;
+  }
+
+  function renderPaidGrabaCell(row: PaidGraba, column: ExcelColumn<PaidGraba>) {
+    if (column.key === "payment_amount") {
+      return (
+        <div className="cell-right" style={{ fontWeight: 600, color: "#34d399" }}>
+          {displayMoney(row.payment_amount)}
+        </div>
+      );
+    }
+    return undefined;
   }
 
   useEffect(() => {
     void loadRows();
   }, []);
 
+  useEffect(() => {
+    if (activeTab === "graba" && !editingGrabaPayment) {
+      setForm((current) => ({
+        ...current,
+        total_amount_paid: selectedGrabaBalanceTotal || "",
+      }));
+    }
+  }, [selectedGrabaBalanceTotal, activeTab, editingGrabaPayment]);
+
+  useEffect(() => {
+    if (activeTab === "sales" && !editingPayment) {
+      setForm((current) => ({
+        ...current,
+        total_amount_paid: selectedBalanceTotal || "",
+      }));
+    }
+  }, [selectedBalanceTotal, activeTab, editingPayment]);
+
+  useEffect(() => {
+    if (activeTab === "supplier" && !editingSupplierPayment) {
+      setForm((current) => ({
+        ...current,
+        total_amount_paid: selectedSupplierBalanceTotal || "",
+      }));
+    }
+  }, [selectedSupplierBalanceTotal, activeTab, editingSupplierPayment]);
+
+  const activeEditing = activeTab === "sales" ? editingPayment : activeTab === "graba" ? editingGrabaPayment : editingSupplierPayment;
+  const currentBalanceTotal = activeTab === "sales" ? selectedBalanceTotal : activeTab === "graba" ? selectedGrabaBalanceTotal : selectedSupplierBalanceTotal;
+  const currentSelectedCount = activeTab === "sales" ? selectedDrafts.length : activeTab === "graba" ? selectedGrabaDrafts.length : selectedSupplierDrafts.length;
+
   return (
-    <Stack gap='md'>
-      <Paper
-        ref={formPanelRef}
-        withBorder
-        radius='sm'
-        p='md'
-        className='masterPanel'
-      >
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            void savePayments();
+    <Stack gap="md">
+      {/* Tab Switcher */}
+      <Group justify="space-between" align="center">
+        <SegmentedControl
+          value={activeTab}
+          onChange={(val) => {
+            setActiveTab(val as "sales" | "graba" | "supplier");
+            cancelEditPayment();
           }}
-        >
-          <Stack gap='md'>
-            <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
-              <Select
-                label='Payment Method'
-                checkIconPosition='right'
-                data={paymentMethods}
-                value={form.payment_method}
-                allowDeselect={false}
-                onChange={(value) => {
-                  setCkNumberError("");
-                  setForm((current) => ({
-                    ...current,
-                    payment_method: (value ?? "CASH") as PaymentMethod,
-                    ck_number: value === "CK" ? current.ck_number : "",
-                  }));
-                }}
-              />
+          data={[
+            { label: "Sales Payments", value: "sales" },
+            { label: "Graba Payments", value: "graba" },
+            { label: "Supplier Payments", value: "supplier" },
+          ]}
+          size="md"
+        />
+        <Badge variant="dot" size="lg" color={isSupabaseConfigured ? "green" : "yellow"}>
+          {isSupabaseConfigured ? "Live DB" : "Demo Mode"}
+        </Badge>
+      </Group>
+
+      {/* Form Area */}
+      <Paper
+        withBorder
+        p="md"
+        className="masterPanel"
+      >
+        <form onSubmit={handleSubmit}>
+          <Stack gap="md">
+            <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="md">
               <DateShortcutInput
-                label='Payment Date'
+                label="Payment Date"
                 value={form.payment_date}
                 error={paymentDateError}
                 onChange={(val) => {
                   setPaymentDateError("");
-                  setForm((current) => ({
-                    ...current,
-                    payment_date: val,
-                  }));
+                  setForm((current) => ({ ...current, payment_date: val }));
                 }}
               />
-              <SuggestionTextInput
-                label='Sales'
-                value={form.sales_person}
-                error={salesFieldError}
-                suggestions={salesPeople.map((person) => person.label)}
-                onValueChange={(value) => {
-                  setSalesFieldError("");
-                  setForm((current) => ({ ...current, sales_person: value }));
-                }}
-                onCommit={(value) => {
-                  setSalesFieldError("");
-                  setForm((current) => ({ ...current, sales_person: value }));
-                }}
-                submitOnEnter={() => setTimeout(() => void savePayments(), 0)}
-              />
-              <TextInput
-                label='Term'
-                placeholder='Optional description'
-                value={form.term}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    term: event.currentTarget.value,
-                  }))
-                }
-              />
-              {form.payment_method === "CK" && (
+
+              {activeTab !== "supplier" && (
+                <Select
+                  label="Method"
+                  data={paymentMethods}
+                  value={form.payment_method}
+                  onChange={(val) =>
+                    setForm((current) => ({
+                      ...current,
+                      payment_method: (val as PaymentMethod) || "CASH",
+                    }))
+                  }
+                />
+              )}
+
+              {activeTab === "sales" && (
+                <>
+                  <SuggestionTextInput
+                    label="Sales"
+                    value={form.sales_person}
+                    error={salesFieldError}
+                    suggestions={salesPeople.map((person) => person.label)}
+                    onValueChange={(value) => {
+                      setSalesFieldError("");
+                      setForm((current) => ({ ...current, sales_person: value }));
+                    }}
+                  />
+                  <TextInput
+                    label="Term"
+                    placeholder="Optional details"
+                    value={form.term}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, term: event.currentTarget.value }))
+                    }
+                  />
+                </>
+              )}
+
+              {activeTab === "supplier" && (
+                <>
+                  <TextInput
+                    label="CK Number"
+                    placeholder="Cheque reference no."
+                    value={form.ck_number}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, ck_number: event.currentTarget.value }))
+                    }
+                  />
+                  <TextInput
+                    label="PO No"
+                    placeholder="PO number"
+                    value={form.po_number}
+                    onChange={(event) =>
+                      setForm((current) => ({ ...current, po_number: event.currentTarget.value }))
+                    }
+                  />
+                  <Select
+                    label="Remarks"
+                    data={["Paid", "Collect"]}
+                    value={form.remarks}
+                    onChange={(val) =>
+                      setForm((current) => ({ ...current, remarks: val ?? "Paid" }))
+                    }
+                  />
+                </>
+              )}
+
+              {activeTab !== "supplier" && form.payment_method === "CK" && (
                 <TextInput
-                  label='CK No'
+                  label="CK No"
                   value={form.ck_number}
                   error={ckNumberError}
                   onChange={(event) => {
                     setCkNumberError("");
-                    setForm((current) => ({
-                      ...current,
-                      ck_number: event.currentTarget.value,
-                    }));
+                    setForm((current) => ({ ...current, ck_number: event.currentTarget.value }));
                   }}
                 />
               )}
-              {editingPayment && (
+
+              {activeEditing && (
                 <NumberInput
-                  label='Amount'
+                  label="Amount"
                   min={0}
                   value={form.edit_amount}
                   error={editAmountError}
                   onChange={(value) => {
                     setEditAmountError("");
-                    setForm((current) => ({
-                      ...current,
-                      edit_amount: Number(value) || "",
-                    }));
+                    setForm((current) => ({ ...current, edit_amount: Number(value) || "" }));
                   }}
                 />
               )}
-              {!editingPayment && (
+
+              {!activeEditing && (
                 <Stack gap={4}>
                   <NumberInput
                     label="Total Amount Paid"
                     min={0}
                     value={form.total_amount_paid}
                     onChange={(value) => {
-                      setForm((current) => ({
-                        ...current,
-                        total_amount_paid: Number(value) || "",
-                      }));
+                      setForm((current) => ({ ...current, total_amount_paid: Number(value) || "" }));
                     }}
                   />
-                  {selectedBalanceTotal > 0 &&
+                  {currentBalanceTotal > 0 &&
                     form.total_amount_paid !== "" &&
-                    Number(form.total_amount_paid) !== selectedBalanceTotal && (
+                    Number(form.total_amount_paid) !== currentBalanceTotal && (
                       <Group gap="xs" style={{ marginTop: 2 }}>
-                        {Number(form.total_amount_paid) - selectedBalanceTotal < 0 ? (
+                        {Number(form.total_amount_paid) - currentBalanceTotal < 0 ? (
                           <Badge color="red" variant="filled">
-                            Kulang ng {formatMoney(Math.abs(Number(form.total_amount_paid) - selectedBalanceTotal))}
+                            Short by {formatMoney(Math.abs(Number(form.total_amount_paid) - currentBalanceTotal))}
                           </Badge>
                         ) : (
                           <Badge color="green" variant="filled">
-                            Sobra ng {formatMoney(Number(form.total_amount_paid) - selectedBalanceTotal)}
+                            Overpaid by {formatMoney(Number(form.total_amount_paid) - currentBalanceTotal)}
                           </Badge>
                         )}
                       </Group>
@@ -769,20 +1431,20 @@ export function PaymentsPage() {
               )}
             </SimpleGrid>
 
-            <Group justify='space-between'>
+            <Group justify="space-between">
               <Group>
                 <Button
                   leftSection={<Save size={16} />}
-                  type='submit'
+                  type="submit"
                   loading={loading}
                 >
-                  {editingPayment ? "Save Changes" : "Save Payments"}
+                  {activeEditing ? "Save Changes" : "Save Payments"}
                 </Button>
-                {editingPayment && (
+                {activeEditing && (
                   <Button
-                    type='button'
-                    variant='light'
-                    color='gray'
+                    type="button"
+                    variant="light"
+                    color="gray"
                     onClick={cancelEditPayment}
                     disabled={loading}
                   >
@@ -790,124 +1452,30 @@ export function PaymentsPage() {
                   </Button>
                 )}
                 <Button
-                  type='button'
+                  type="button"
                   leftSection={<RefreshCw size={16} />}
-                  variant='light'
+                  variant="light"
                   onClick={loadRows}
                   loading={loading}
                 >
                   Refresh
                 </Button>
               </Group>
-              <Badge variant='light'>
-                {editingPayment
-                  ? "Editing payment"
-                  : `Selected: ${selectedDrafts.length} | Balance Total: ${displayMoney(selectedBalanceTotal)}`}
-              </Badge>
+              {currentSelectedCount > 0 && (
+                <Badge variant="light" size="lg">
+                  Selected Count: {currentSelectedCount} | Remaining Bal: {formatMoney(currentBalanceTotal)}
+                </Badge>
+              )}
             </Group>
           </Stack>
         </form>
       </Paper>
 
-      <Paper
-        withBorder
-        radius='sm'
-        p='md'
-        className='masterPanel'
-      >
-        <Stack gap='sm'>
-          <Group justify='space-between'>
-            <Badge variant='outline'>Unpaid Sales</Badge>
-            <Badge variant='light'>
-              {filteredPayableSales.length} of {payableSales.length} open ORs
-            </Badge>
-          </Group>
-          <TextInput
-            placeholder='Search any unpaid sale'
-            value={unpaidSearch}
-            onChange={(event) => setUnpaidSearch(event.currentTarget.value)}
-          />
-          <CustomExcelTable
-            columns={unpaidColumns}
-            data={filteredPayableSales}
-            withSelection={true}
-            checkedRowIds={selectedUnpaidRowIds}
-            onCheckedRowIdsChange={handleUnpaidSelectionChange}
-            renderCell={renderUnpaidCell}
-            contextMenuItems={["select_rows"]}
-            onSelectRowsClick={(selectedRows) => {
-              const nextSelected = new Set(selectedUnpaidRowIds);
-              selectedRows.forEach((row) => nextSelected.add(row.id));
-              handleUnpaidSelectionChange(nextSelected);
-            }}
-          />
-        </Stack>
-      </Paper>
-
-      <Paper
-        withBorder
-        radius='sm'
-        p='md'
-        className='masterPanel'
-      >
-        <Stack gap='sm'>
-          <Group justify='space-between'>
-            <Badge variant='outline'>Paid Sales</Badge>
-            <Badge variant='light'>
-              {filteredPaidSales.length} of {paidSales.length} paid ORs
-            </Badge>
-          </Group>
-          <TextInput
-            placeholder='Search any paid sale'
-            value={paidSearch}
-            onChange={(event) => setPaidSearch(event.currentTarget.value)}
-          />
-          <CustomExcelTable
-            columns={paidColumns}
-            data={filteredPaidSales}
-            renderCell={renderPaidCell}
-            onEditClick={(row) => {
-              if (row.payment_id) {
-                startEditPayment(row);
-              }
-            }}
-            onDeleteClick={(row) => {
-              if (row.payment_id) {
-                void deletePayment(row);
-              }
-            }}
-            renderRowActions={(row) => (
-              <Group gap='xs' justify='center'>
-                <Button
-                  size='xs'
-                  variant='subtle'
-                  leftSection={<Edit3 size={14} />}
-                  onClick={() => startEditPayment(row)}
-                  disabled={!row.payment_id}
-                >
-                  Edit
-                </Button>
-                <Button
-                  size='xs'
-                  variant='subtle'
-                  color='red'
-                  leftSection={<Trash2 size={14} />}
-                  onClick={() => void deletePayment(row)}
-                  disabled={!row.payment_id}
-                >
-                  Delete
-                </Button>
-              </Group>
-            )}
-          />
-        </Stack>
-      </Paper>
-
       {!isSupabaseConfigured && (
         <Alert
           icon={<AlertCircle size={16} />}
-          color='yellow'
-          title='Supabase is not configured'
+          color="yellow"
+          title="Supabase is not configured"
         >
           Supabase credentials are missing from .env.
         </Alert>
@@ -916,14 +1484,224 @@ export function PaymentsPage() {
       {error && (
         <Alert
           icon={<AlertCircle size={16} />}
-          color='red'
-          title='Database error'
+          color="red"
+          title="Database error"
         >
           {error}
         </Alert>
       )}
 
-      {message && <Alert color='green'>{message}</Alert>}
+      {message && <Alert color="green">{message}</Alert>}
+
+      {/* Main Billing Table Grids */}
+      {activeTab === "sales" && (
+        <Stack gap="xl">
+          <Stack gap="xs">
+            <Group justify="space-between">
+              <Text size="lg" fw={600}>Unpaid OR Transactions</Text>
+              <TextInput
+                placeholder="Search Client..."
+                value={unpaidSearch}
+                onChange={(e) => setUnpaidSearch(e.currentTarget.value)}
+                style={{ width: 220 }}
+              />
+            </Group>
+            <CustomExcelTable
+              columns={unpaidColumns}
+              data={filteredPayableSales}
+              withSelection
+              checkedRowIds={selectedUnpaidRowIds}
+              onCheckedRowIdsChange={handleUnpaidSelectionChange}
+              renderCell={renderUnpaidCell}
+            />
+          </Stack>
+
+          <Stack gap="xs">
+            <Group justify="space-between">
+              <Text size="lg" fw={600}>Paid History</Text>
+              <TextInput
+                placeholder="Search Client..."
+                value={paidSearch}
+                onChange={(e) => setPaidSearch(e.currentTarget.value)}
+                style={{ width: 220 }}
+              />
+            </Group>
+            <CustomExcelTable
+              columns={paidColumns}
+              data={filteredPaidSales}
+              onEditClick={(row) => startEditSalesPayment(row)}
+              onDeleteClick={(row) => deleteSalesPayment(row)}
+              renderRowActions={(row) => (
+                <Group gap="xs" justify="center">
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    leftSection={<Edit3 size={14} />}
+                    onClick={() => startEditSalesPayment(row)}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="red"
+                    leftSection={<Trash2 size={14} />}
+                    onClick={() => deleteSalesPayment(row)}
+                  >
+                    Delete
+                  </Button>
+                </Group>
+              )}
+            />
+          </Stack>
+        </Stack>
+      )}
+
+      {activeTab === "graba" && (
+        <Stack gap="xl">
+          <Stack gap="xs">
+            <Group justify="space-between">
+              <Text size="lg" fw={600}>Unpaid Graba Records</Text>
+              <TextInput
+                placeholder="Search Supplier/DR..."
+                value={unpaidGrabaSearch}
+                onChange={(e) => setUnpaidGrabaSearch(e.currentTarget.value)}
+                style={{ width: 220 }}
+              />
+            </Group>
+            <CustomExcelTable
+              columns={unpaidGrabaColumns}
+              data={filteredPayableGraba}
+              withSelection
+              checkedRowIds={selectedUnpaidGrabaRowIds}
+              onCheckedRowIdsChange={handleUnpaidGrabaSelectionChange}
+              renderCell={renderUnpaidGrabaCell}
+            />
+          </Stack>
+
+          <Stack gap="xs">
+            <Group justify="space-between">
+              <Text size="lg" fw={600}>Paid History</Text>
+              <TextInput
+                placeholder="Search Supplier/DR..."
+                value={paidGrabaSearch}
+                onChange={(e) => setPaidGrabaSearch(e.currentTarget.value)}
+                style={{ width: 220 }}
+              />
+            </Group>
+            <CustomExcelTable
+              columns={paidGrabaColumns}
+              data={filteredPaidGraba}
+              onEditClick={(row) => startEditGrabaPayment(row)}
+              onDeleteClick={(row) => deleteGrabaPayment(row)}
+              renderCell={renderPaidGrabaCell}
+              renderRowActions={(row) => (
+                <Group gap="xs" justify="center">
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    leftSection={<Edit3 size={14} />}
+                    onClick={() => startEditGrabaPayment(row)}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="red"
+                    leftSection={<Trash2 size={14} />}
+                    onClick={() => deleteGrabaPayment(row)}
+                  >
+                    Delete
+                  </Button>
+                </Group>
+              )}
+            />
+          </Stack>
+        </Stack>
+      )}
+
+      {activeTab === "supplier" && (
+        <Stack gap="xl">
+          <Stack gap="xs">
+            <Group justify="space-between">
+              <Text size="lg" fw={600}>Unpaid Supplier Transactions</Text>
+              <TextInput
+                placeholder="Search Supplier/DR..."
+                value={unpaidSupplierSearch}
+                onChange={(e) => setUnpaidSupplierSearch(e.currentTarget.value)}
+                style={{ width: 220 }}
+              />
+            </Group>
+            <CustomExcelTable
+              columns={unpaidSupplierColumns}
+              data={filteredPayableSupplier}
+              withSelection
+              checkedRowIds={selectedUnpaidSupplierRowIds}
+              onCheckedRowIdsChange={handleUnpaidSupplierSelectionChange}
+              renderCell={(row, col) => {
+                if (col.key === "balance_amount") {
+                  return (
+                    <div className="cell-right" style={{ fontWeight: 600, color: "#f87171" }}>
+                      {displayMoney(row.balance_amount)}
+                    </div>
+                  );
+                }
+                return undefined;
+              }}
+            />
+          </Stack>
+
+          <Stack gap="xs">
+            <Group justify="space-between">
+              <Text size="lg" fw={600}>Paid History</Text>
+              <TextInput
+                placeholder="Search Supplier/DR..."
+                value={paidSupplierSearch}
+                onChange={(e) => setPaidSupplierSearch(e.currentTarget.value)}
+                style={{ width: 220 }}
+              />
+            </Group>
+            <CustomExcelTable
+              columns={paidSupplierColumns}
+              data={filteredPaidSupplier}
+              onEditClick={(row) => startEditSupplierPayment(row)}
+              onDeleteClick={(row) => deleteSupplierPayment(row)}
+              renderCell={(row, col) => {
+                if (col.key === "payment_amount") {
+                  return (
+                    <div className="cell-right" style={{ fontWeight: 600, color: "#34d399" }}>
+                      {displayMoney(row.payment_amount)}
+                    </div>
+                  );
+                }
+                return undefined;
+              }}
+              renderRowActions={(row) => (
+                <Group gap="xs" justify="center">
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    leftSection={<Edit3 size={14} />}
+                    onClick={() => startEditSupplierPayment(row)}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="red"
+                    leftSection={<Trash2 size={14} />}
+                    onClick={() => deleteSupplierPayment(row)}
+                  >
+                    Delete
+                  </Button>
+                </Group>
+              )}
+            />
+          </Stack>
+        </Stack>
+      )}
     </Stack>
   );
 }
