@@ -127,9 +127,9 @@ export function CustomersPage() {
 
     const [billingRes, paymentsRes] = await Promise.all([
       supabase
-        .from("sales_billing_summary")
+        .from("sales_records")
         .select(
-          "id,sale_or_number,sale_date,customer_name,concrete_design,cubic_volume,total_amount,paid_amount,balance_amount,payment_status",
+          "id,sale_or_number,sale_date,cubic_volume,unit_price,total_amount,pumpcreate,manual_customer_name,payment_status,customers(name),concrete_designs(code,pumpcreate)",
         )
         .order("sale_date", { ascending: false }),
       supabase
@@ -145,7 +145,39 @@ export function CustomersPage() {
       return;
     }
 
-    setSalesRecords((billingRes.data ?? []) as unknown as SummaryRecord[]);
+    const rawSales = (billingRes.data ?? []) as any[];
+    const processedSummary: SummaryRecord[] = rawSales.map((record) => {
+      const custName = Array.isArray(record.customers)
+        ? record.customers[0]?.name
+        : record.customers?.name;
+      const customerName = custName ?? record.manual_customer_name ?? "";
+
+      const designCode = Array.isArray(record.concrete_designs)
+        ? record.concrete_designs[0]?.code
+        : record.concrete_designs?.code;
+      const designPumpcreate = Array.isArray(record.concrete_designs)
+        ? record.concrete_designs[0]?.pumpcreate
+        : record.concrete_designs?.pumpcreate;
+
+      const pumpVal = Number(record.pumpcreate ?? designPumpcreate ?? 0);
+      const baseTotal = Number(record.total_amount || 0);
+      const totalAmount = baseTotal + pumpVal;
+
+      return {
+        id: record.id,
+        sale_or_number: Number(record.sale_or_number || 0),
+        sale_date: record.sale_date,
+        customer_name: customerName,
+        concrete_design: designCode ?? "",
+        cubic_volume: Number(record.cubic_volume || 0),
+        total_amount: totalAmount,
+        paid_amount: 0,
+        balance_amount: 0,
+        payment_status: record.payment_status,
+      };
+    });
+
+    setSalesRecords(processedSummary);
     setSalesPayments((paymentsRes.data ?? []) as unknown as SalesPaymentRecord[]);
   }
 
@@ -196,17 +228,21 @@ export function CustomersPage() {
 
     for (const sale of filteredSales) {
       const clientName = sale.customer_name?.trim() || "Unspecified Client";
+      const paymentsForSale = paymentsMap.get(sale.id) || [];
+      const paidAmount = paymentsForSale.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+      const balanceAmount = sale.total_amount - paidAmount;
+
       const saleWithPayments: SaleWithPayments = {
         id: sale.id,
         sale_or_number: Number(sale.sale_or_number || 0),
         sale_date: sale.sale_date,
         design: sale.concrete_design || "",
         cubic_volume: Number(sale.cubic_volume || 0),
-        total_amount: Number(sale.total_amount || 0),
-        paid_amount: Number(sale.paid_amount || 0),
-        balance_amount: Number(sale.balance_amount || 0),
+        total_amount: sale.total_amount,
+        paid_amount: paidAmount,
+        balance_amount: balanceAmount,
         payment_status: sale.payment_status,
-        payments: paymentsMap.get(sale.id) || [],
+        payments: paymentsForSale,
       };
 
       const group = clientMap.get(clientName);

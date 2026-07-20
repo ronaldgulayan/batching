@@ -83,7 +83,7 @@ export function MaintenanceLookupPage({ table, orderBy, fields, columns, uniqueK
     const record = Object.fromEntries(
       fields.map((field) => {
         const value = form[field.key];
-        if (field.numeric) return [field.key, Number(value || 0)];
+        if (field.numeric) return [field.key, value === '' || value === null || value === undefined ? null : Number(value)];
         return [field.key, String(value ?? '').trim() || null];
       }),
     );

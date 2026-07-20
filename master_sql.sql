@@ -44,6 +44,7 @@ create table concrete_designs (
   code text not null unique,
   description text,
   strength_psi numeric(12,2),
+  pumpcreate numeric(12,2),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -87,6 +88,7 @@ create table sales_records (
   project_site text,
   cubic_volume numeric(12,2) not null check (cubic_volume >= 0),
   unit_price numeric(12,2) not null check (unit_price >= 0),
+  pumpcreate numeric(12,2),
   total_amount numeric(12,2) generated always as (cubic_volume * unit_price) stored,
   payment_status payment_status not null default 'unpaid',
   remarks text,

@@ -27,6 +27,7 @@ type PayableSale = {
   sale_date: string;
   customer_name: string;
   total_amount: number;
+  pumpcrete: number;
   paid_amount: number;
   balance_amount: number;
 };
@@ -240,9 +241,28 @@ export function PaymentsPage() {
     [payableSales, selectedUnpaidRowIds]
   );
 
-  const selectedBalanceTotal = useMemo(
+  const selectedConcreteTotal = useMemo(
     () => selectedDrafts.reduce((sum, sale) => sum + sale.balance_amount, 0),
     [selectedDrafts]
+  );
+
+  const selectedPumpcreteTotal = useMemo(() => {
+    const distinctPumpValues = new Set(
+      selectedDrafts
+        .map((sale) => Number(sale.pumpcrete || 0))
+        .filter((val) => val > 0)
+    );
+
+    let sum = 0;
+    for (const val of distinctPumpValues) {
+      sum += val;
+    }
+    return sum;
+  }, [selectedDrafts]);
+
+  const selectedBalanceTotal = useMemo(
+    () => selectedConcreteTotal + selectedPumpcreteTotal,
+    [selectedConcreteTotal, selectedPumpcreteTotal]
   );
 
   // Graba derivations
@@ -483,7 +503,7 @@ export function PaymentsPage() {
 
     try {
       const [
-        salesSummary,
+        salesRecordsResult,
         salesPaymentsResult,
         salesPeopleResult,
         grabaSummaryResult,
@@ -492,8 +512,8 @@ export function PaymentsPage() {
         supplierPaymentsResult,
       ] = await Promise.all([
         supabase
-          .from("sales_billing_summary")
-          .select("id,sale_or_number,sale_date,customer_name,total_amount,paid_amount,balance_amount")
+          .from("sales_records")
+          .select("id,sale_or_number,sale_date,cubic_volume,unit_price,total_amount,pumpcreate,manual_customer_name,customers(name),concrete_designs(pumpcreate)")
           .order("sale_or_number", { ascending: false }),
         supabase
           .from("sales_payments")
@@ -506,7 +526,7 @@ export function PaymentsPage() {
         supabase.from("supplier_payments").select("*").order("created_at", { ascending: false }),
       ]);
 
-      if (salesSummary.error) throw new Error(salesSummary.error.message);
+      if (salesRecordsResult.error) throw new Error(salesRecordsResult.error.message);
       if (salesPaymentsResult.error) throw new Error(salesPaymentsResult.error.message);
       if (salesPeopleResult.error) throw new Error(salesPeopleResult.error.message);
       if (grabaSummaryResult.error) throw new Error(grabaSummaryResult.error.message);
@@ -515,16 +535,50 @@ export function PaymentsPage() {
       if (supplierPaymentsResult.error) throw new Error(supplierPaymentsResult.error.message);
 
       // Process Sales
-      const sales = (salesSummary.data ?? []) as PayableSale[];
-      const openSales = sales.filter((sale) => sale.balance_amount > 0);
-      const closedSales = sales.filter((sale) => sale.balance_amount <= 0);
-
+      const allSalesPayments = (salesPaymentsResult.data ?? []) as SalesPaymentRecord[];
+      const salesPaidMap = new Map<string, number>();
       const latestSalesPaymentById = new Map<string, SalesPaymentRecord>();
-      for (const payment of (salesPaymentsResult.data ?? []) as SalesPaymentRecord[]) {
+
+      for (const payment of allSalesPayments) {
+        const currentTotal = salesPaidMap.get(payment.sales_record_id) ?? 0;
+        salesPaidMap.set(payment.sales_record_id, currentTotal + Number(payment.amount || 0));
+
         if (!latestSalesPaymentById.has(payment.sales_record_id)) {
           latestSalesPaymentById.set(payment.sales_record_id, payment);
         }
       }
+
+      const rawSalesRecords = (salesRecordsResult.data ?? []) as any[];
+      const sales: PayableSale[] = rawSalesRecords.map((record) => {
+        const custName = Array.isArray(record.customers)
+          ? record.customers[0]?.name
+          : record.customers?.name;
+        const customerName = custName ?? record.manual_customer_name ?? "";
+
+        const designPumpcreate = Array.isArray(record.concrete_designs)
+          ? record.concrete_designs[0]?.pumpcreate
+          : record.concrete_designs?.pumpcreate;
+        const pumpcreateVal = Number(record.pumpcreate ?? designPumpcreate ?? 0);
+
+        const baseTotal = Number(record.total_amount || 0);
+
+        const paidAmount = salesPaidMap.get(record.id) ?? 0;
+        const balanceAmount = baseTotal - paidAmount;
+
+        return {
+          id: record.id,
+          sale_or_number: Number(record.sale_or_number || 0),
+          sale_date: record.sale_date,
+          customer_name: customerName,
+          total_amount: baseTotal,
+          pumpcrete: pumpcreateVal,
+          paid_amount: paidAmount,
+          balance_amount: balanceAmount,
+        };
+      });
+
+      const openSales = sales.filter((sale) => sale.balance_amount > 0 || sale.pumpcrete > 0);
+      const closedSales = sales.filter((sale) => sale.balance_amount <= 0 && sale.pumpcrete <= 0);
 
       setPayableSales(openSales);
       setPaidSales(
@@ -645,7 +699,7 @@ export function PaymentsPage() {
       paymentId: row.payment_id,
       saleId: row.id,
       oldAmount: row.payment_amount,
-      totalAmount: row.total_amount,
+      totalAmount: row.total_amount + row.pumpcrete,
       paidAmount: row.paid_amount,
     });
     setForm({
@@ -727,7 +781,8 @@ export function PaymentsPage() {
       if (deleteError) throw new Error(deleteError.message);
 
       const nextPaidAmount = row.paid_amount - row.payment_amount;
-      const status = nextPaidAmount >= row.total_amount ? "paid" : nextPaidAmount > 0 ? "deposit" : "unpaid";
+      const grossTotal = row.total_amount + row.pumpcrete;
+      const status = nextPaidAmount >= grossTotal ? "paid" : nextPaidAmount > 0 ? "deposit" : "unpaid";
       const { error: statusError } = await supabase
         .from("sales_records")
         .update({ payment_status: status })
@@ -908,11 +963,12 @@ export function PaymentsPage() {
       for (let i = 0; i < selectedDrafts.length; i++) {
         const sale = selectedDrafts[i];
         let paymentForThisSale = 0;
+        const saleFullTarget = sale.balance_amount + sale.pumpcrete;
 
         if (i === selectedDrafts.length - 1) {
           paymentForThisSale = remainingPaid;
         } else {
-          paymentForThisSale = Math.min(remainingPaid, sale.balance_amount);
+          paymentForThisSale = Math.min(remainingPaid, saleFullTarget);
           if (paymentForThisSale < 0) paymentForThisSale = 0;
         }
         remainingPaid -= paymentForThisSale;
@@ -928,7 +984,7 @@ export function PaymentsPage() {
           });
 
           const nextPaidAmount = sale.paid_amount + paymentForThisSale;
-          const status = nextPaidAmount >= sale.total_amount ? "paid" : "deposit";
+          const status = nextPaidAmount >= (sale.total_amount + sale.pumpcrete) ? "paid" : "deposit";
           saleUpdates.push({ id: sale.id, status });
         }
       }
@@ -1412,6 +1468,13 @@ export function PaymentsPage() {
                       setForm((current) => ({ ...current, total_amount_paid: Number(value) || "" }));
                     }}
                   />
+                  {activeTab === "sales" && selectedDrafts.length > 0 && (
+                    <Text size="xs" c="dimmed">
+                      Concrete: {formatMoney(selectedConcreteTotal)}
+                      {selectedPumpcreteTotal > 0 && ` + Pumpcrete: ${formatMoney(selectedPumpcreteTotal)}`}
+                      {" = Total: "}{formatMoney(selectedBalanceTotal)}
+                    </Text>
+                  )}
                   {currentBalanceTotal > 0 &&
                     form.total_amount_paid !== "" &&
                     Number(form.total_amount_paid) !== currentBalanceTotal && (

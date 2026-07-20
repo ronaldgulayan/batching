@@ -2,6 +2,7 @@ import { MaintenanceLookupPage } from '../components/MaintenanceLookupPage';
 const columns = [
   { key: 'code', label: 'Design', width: 160, sortable: true },
   { key: 'description', label: 'Description', width: 260, sortable: true },
+  { key: 'pumpcreate', label: 'Pumpcrete', type: 'number', width: 140, sortable: true },
 ] as const;
 
 export function MaintenanceDesignsPage() {
@@ -13,6 +14,7 @@ export function MaintenanceDesignsPage() {
       fields={[
         { key: 'code', label: 'Design', required: true },
         { key: 'description', label: 'Description' },
+        { key: 'pumpcreate', label: 'Pumpcrete', numeric: true },
       ]}
       columns={columns}
     />

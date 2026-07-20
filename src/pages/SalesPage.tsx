@@ -34,6 +34,7 @@ import { DateShortcutInput } from "../components/DateShortcutInput";
 type Lookup = {
   id: string;
   label: string;
+  pumpcreate?: number | null;
 };
 
 type SaleRow = {
@@ -45,6 +46,7 @@ type SaleRow = {
   site: string;
   cubic_volume: number;
   unit_price: number;
+  pumpcreate?: number | null;
   total_amount: number;
   payment_status: string;
   counter_date: string;
@@ -60,11 +62,12 @@ type SalesRecord = {
   project_site: string | null;
   cubic_volume: number;
   unit_price: number;
+  pumpcreate?: number | null;
   total_amount: number;
   payment_status: string;
   remarks: string | null;
   customers?: { name: string } | { name: string }[] | null;
-  concrete_designs?: { code: string } | { code: string }[] | null;
+  concrete_designs?: { code: string; pumpcreate?: number | null } | { code: string; pumpcreate?: number | null }[] | null;
 };
 
 type SaleForm = {
@@ -76,6 +79,7 @@ type SaleForm = {
   project_site: string;
   cubic_volume: number | "";
   unit_price: number | "";
+  pumpcreate: number | "";
   counter_date: string;
   counter: string;
 };
@@ -95,6 +99,7 @@ const emptyForm: SaleForm = {
   project_site: "",
   cubic_volume: "",
   unit_price: "",
+  pumpcreate: "",
   counter_date: "",
   counter: "",
 };
@@ -155,6 +160,13 @@ const saleColumns: ExcelColumn<SaleRow>[] = [
     label: "Price",
     type: "number",
     width: 130,
+    sortable: true,
+  },
+  {
+    key: "pumpcreate",
+    label: "Pumpcrete",
+    type: "number",
+    width: 110,
     sortable: true,
   },
   {
@@ -220,6 +232,7 @@ export function SalesPage() {
         row.site,
         row.cubic_volume,
         row.unit_price,
+        row.pumpcreate,
         row.total_amount,
         row.payment_status,
       ]
@@ -273,7 +286,7 @@ export function SalesPage() {
       siteResult,
     ] = await Promise.all([
       supabase.from("customers").select("id,name").order("name"),
-      supabase.from("concrete_designs").select("id,code").order("code"),
+      supabase.from("concrete_designs").select("id,code,pumpcreate").order("code"),
       supabase.from("project_sites").select("id,name").order("name"),
     ]);
 
@@ -295,6 +308,7 @@ export function SalesPage() {
       (designData ?? []).map((design) => ({
         id: design.id,
         label: design.code,
+        pumpcreate: (design.pumpcreate as number | null) ?? null,
       })),
     );
     setSites(
@@ -316,7 +330,7 @@ export function SalesPage() {
       const { data, error: loadError } = await supabase
         .from("sales_records")
         .select(
-          "id,sale_or_number,sale_date,customer_id,manual_customer_name,project_site,cubic_volume,unit_price,total_amount,payment_status,customers(name),concrete_designs(code),remarks",
+          "id,sale_or_number,sale_date,customer_id,manual_customer_name,project_site,cubic_volume,unit_price,pumpcreate,total_amount,payment_status,customers(name),concrete_designs(code,pumpcreate),remarks",
         )
         .order("sale_or_number", { ascending: false })
         .limit(300);
@@ -336,21 +350,28 @@ export function SalesPage() {
         sale_or_number: current.sale_or_number || nextNumber,
       }));
       setRows(
-        records.map((record) => ({
-          id: record.id,
-          sale_or_number: Number(record.sale_or_number || 0),
-          sale_date: record.sale_date,
-          client_name:
-            relatedName(record.customers) ?? record.manual_customer_name ?? "",
-          design: relatedCode(record.concrete_designs) ?? "",
-          site: record.project_site ?? "",
-          cubic_volume: Number(record.cubic_volume || 0),
-          unit_price: Number(record.unit_price || 0),
-          total_amount: Number(record.total_amount || 0),
-          payment_status: record.payment_status,
-          counter_date: remarkValue(record.remarks, "Counter Date"),
-          counter: remarkValue(record.remarks, "Counter"),
-        })),
+        records.map((record) => {
+          const designPumpcreate = Array.isArray(record.concrete_designs)
+            ? record.concrete_designs[0]?.pumpcreate
+            : record.concrete_designs?.pumpcreate;
+
+          return {
+            id: record.id,
+            sale_or_number: Number(record.sale_or_number || 0),
+            sale_date: record.sale_date,
+            client_name:
+              relatedName(record.customers) ?? record.manual_customer_name ?? "",
+            design: relatedCode(record.concrete_designs) ?? "",
+            site: record.project_site ?? "",
+            cubic_volume: Number(record.cubic_volume || 0),
+            unit_price: Number(record.unit_price || 0),
+            pumpcreate: record.pumpcreate ?? designPumpcreate ?? null,
+            total_amount: Number(record.total_amount || 0),
+            payment_status: record.payment_status,
+            counter_date: remarkValue(record.remarks, "Counter Date"),
+            counter: remarkValue(record.remarks, "Counter"),
+          };
+        }),
       );
     } catch (loadError) {
       setError(
@@ -423,12 +444,16 @@ export function SalesPage() {
     return data.id;
   }
 
-  function designIdFromLabel(label: string) {
+  function getDesignFromLabel(label: string) {
     return (
       designs.find(
         (design) => design.label.toLowerCase() === label.trim().toLowerCase(),
-      )?.id ?? null
+      ) ?? null
     );
+  }
+
+  function designIdFromLabel(label: string) {
+    return getDesignFromLabel(label)?.id ?? null;
   }
 
   function createBatchDrafts() {
@@ -444,13 +469,17 @@ export function SalesPage() {
 
     setError("");
     setMessage("");
+    const matchedDesign = getDesignFromLabel(form.design_label);
+    const defaultPumpcreate = form.pumpcreate !== "" ? form.pumpcreate : (matchedDesign?.pumpcreate ?? "");
+
     setBatchDrafts(
       Array.from({ length: count }, (_, index) => ({
         ...form,
         id: `${Date.now()}-${index}`,
         sale_or_number: startOrNumber + index,
         concrete_design_id:
-          form.concrete_design_id ?? designIdFromLabel(form.design_label),
+          form.concrete_design_id ?? matchedDesign?.id ?? null,
+        pumpcreate: defaultPumpcreate,
       })),
     );
     setBatchModalOpen(true);
@@ -518,13 +547,15 @@ export function SalesPage() {
     setMessage("");
   }
 
-  function validateSaleDraft(draft: SaleForm, rowLabel = "Sale") {
+  function validateSaleDraft(draft: SaleForm & { id?: string }, rowLabel = "Sale") {
     const orNumber = Number(draft.sale_or_number || 0);
 
-    const isKeepingEditedOrNumber =
-      editingSale && orNumber === editingSale.originalOrNumber;
+    const isExistingRecord = draft.id && rows.some((r) => r.id === draft.id);
+    const existingRecord = isExistingRecord ? rows.find((r) => r.id === draft.id) : null;
+    const isKeepingOriginalOr = existingRecord && existingRecord.sale_or_number === orNumber;
+    const isKeepingSingleEditedOr = editingSale && orNumber === editingSale.originalOrNumber;
 
-    if (!isKeepingEditedOrNumber && orNumber < nextOrNumber) {
+    if (!isKeepingOriginalOr && !isKeepingSingleEditedOr && orNumber < nextOrNumber) {
       return `${rowLabel}: OR No must be ${nextOrNumber} or higher. Used or skipped numbers cannot be reused.`;
     }
 
@@ -544,15 +575,17 @@ export function SalesPage() {
     setEditingSale({ id: row.id, originalOrNumber: row.sale_or_number });
     setError("");
     setMessage("");
+    const matchedDesign = getDesignFromLabel(row.design);
     setForm({
       sale_date: row.sale_date,
       sale_or_number: row.sale_or_number,
       client_name: row.client_name,
-      concrete_design_id: designIdFromLabel(row.design),
+      concrete_design_id: matchedDesign?.id ?? null,
       design_label: row.design,
       project_site: row.site,
       cubic_volume: row.cubic_volume,
       unit_price: row.unit_price,
+      pumpcreate: row.pumpcreate ?? matchedDesign?.pumpcreate ?? "",
       counter_date: row.counter_date,
       counter: row.counter,
     });
@@ -598,6 +631,68 @@ export function SalesPage() {
     await loadRows();
   }
 
+  async function deleteSelectedSales() {
+    if (selectedSaleIds.size === 0) return;
+
+    const count = selectedSaleIds.size;
+    if (!window.confirm(`Are you sure you want to delete ${count} selected sale(s)? This will perform a hard delete.`)) {
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const idsToDelete = Array.from(selectedSaleIds).map(String);
+      const { error: deleteError } = await supabase
+        .from("sales_records")
+        .delete()
+        .in("id", idsToDelete);
+
+      if (deleteError) throw new Error(deleteError.message);
+
+      setMessage(`Successfully deleted ${count} sale(s).`);
+      setSelectedSaleIds(new Set());
+      if (editingSale && idsToDelete.includes(editingSale.id)) {
+        cancelEditSale();
+      }
+      await loadRows();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to delete selected sales.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function startEditSelectedSales() {
+    if (selectedSaleIds.size === 0) return;
+
+    const selectedRows = rows.filter((row) => selectedSaleIds.has(row.id));
+    if (selectedRows.length === 0) return;
+
+    const drafts: BatchSaleDraft[] = selectedRows.map((row) => {
+      const matchedDesign = getDesignFromLabel(row.design);
+      return {
+        id: row.id,
+        sale_date: row.sale_date,
+        sale_or_number: row.sale_or_number,
+        client_name: row.client_name,
+        concrete_design_id: matchedDesign?.id ?? null,
+        design_label: row.design,
+        project_site: row.site,
+        cubic_volume: row.cubic_volume,
+        unit_price: row.unit_price,
+        pumpcreate: row.pumpcreate ?? "",
+        counter_date: row.counter_date,
+        counter: row.counter,
+      };
+    });
+
+    setBatchDrafts(drafts);
+    setBatchModalOpen(true);
+  }
+
   async function saveBatchSales() {
     if (!isSupabaseConfigured) {
       setError("Supabase credentials are missing from .env.");
@@ -637,7 +732,10 @@ export function SalesPage() {
       const designIds = new Map<string, string>();
 
       const payload = [];
-      for (const draft of batchDrafts) {
+      let updatedCount = 0;
+      let insertedCount = 0;
+
+      for (const [index, draft] of batchDrafts.entries()) {
         const customerKey = draft.client_name.trim().toLowerCase();
         const siteKey = draft.project_site.trim().toLowerCase();
         const designKey = draft.design_label.trim().toLowerCase();
@@ -663,7 +761,9 @@ export function SalesPage() {
           designIds.set(designKey, designId);
         }
 
-        payload.push({
+        const isExistingRecord = rows.some((r) => r.id === draft.id);
+
+        const saleRecordPayload = {
           sale_or_number: Number(draft.sale_or_number || 0),
           sale_date: draft.sale_date,
           customer_id: customerId,
@@ -672,24 +772,38 @@ export function SalesPage() {
           project_site: siteName,
           cubic_volume: Number(draft.cubic_volume || 0),
           unit_price: Number(draft.unit_price || 0),
-          payment_status: "unpaid",
+          pumpcreate: draft.pumpcreate === "" ? null : Number(draft.pumpcreate),
           remarks: buildRemarks(draft.counter_date, draft.counter),
-        });
+        };
+
+        if (isExistingRecord) {
+          const { error: updateErr } = await supabase
+            .from("sales_records")
+            .update(saleRecordPayload)
+            .eq("id", draft.id);
+          if (updateErr) throw new Error(updateErr.message);
+          updatedCount++;
+        } else {
+          const { error: insertErr } = await supabase
+            .from("sales_records")
+            .insert({ ...saleRecordPayload, payment_status: "unpaid" });
+          if (insertErr) throw new Error(insertErr.message);
+          insertedCount++;
+        }
       }
 
-      const { error: insertError } = await supabase
-        .from("sales_records")
-        .insert(payload);
-      if (insertError) throw new Error(insertError.message);
+      if (updatedCount > 0 && insertedCount === 0) {
+        setMessage(`Updated ${updatedCount} sale(s) successfully.`);
+      } else if (insertedCount > 0 && updatedCount === 0) {
+        setMessage(`Saved ${insertedCount} new sale(s) successfully.`);
+      } else {
+        setMessage(`Saved ${insertedCount} new sale(s) and updated ${updatedCount} sale(s) successfully.`);
+      }
 
-      const nextNumber =
-        Math.max(...payload.map((sale) => sale.sale_or_number)) + 1;
-      setMessage(
-        `Saved ${payload.length} sales, OR No ${payload[0].sale_or_number} to ${nextNumber - 1}.`,
-      );
       setBatchModalOpen(false);
       setBatchDrafts([]);
-      setForm({ ...emptyForm, sale_or_number: nextNumber });
+      setSelectedSaleIds(new Set());
+      setForm({ ...emptyForm, sale_or_number: displayedNextOrNumber });
       await loadRows();
     } catch (saveError) {
       setError(
@@ -709,12 +823,6 @@ export function SalesPage() {
     }
 
     const orNumber = Number(form.sale_or_number || 0);
-    if (orNumber < nextOrNumber) {
-      setError(
-        `OR No must be ${nextOrNumber} or higher. Used or skipped numbers cannot be reused.`,
-      );
-      return;
-    }
 
     const validationError = validateSaleDraft(form);
     if (validationError) {
@@ -743,6 +851,7 @@ export function SalesPage() {
         project_site: siteName,
         cubic_volume: Number(form.cubic_volume || 0),
         unit_price: Number(form.unit_price || 0),
+        pumpcreate: form.pumpcreate === "" ? null : Number(form.pumpcreate),
         remarks: buildRemarks(form.counter_date, form.counter),
       };
 
@@ -824,20 +933,34 @@ export function SalesPage() {
                 label="Design"
                 value={form.design_label}
                 suggestions={designs.map((design) => design.label)}
-                onValueChange={(value) =>
+                onValueChange={(value) => {
+                  const matched = getDesignFromLabel(value);
                   setForm((current) => ({
                     ...current,
                     design_label: value,
-                    concrete_design_id: designIdFromLabel(value),
-                  }))
-                }
-                onCommit={(value) =>
+                    concrete_design_id: matched?.id ?? null,
+                    pumpcreate:
+                      matched && matched.pumpcreate != null
+                        ? matched.pumpcreate
+                        : matched
+                          ? ""
+                          : current.pumpcreate,
+                  }));
+                }}
+                onCommit={(value) => {
+                  const matched = getDesignFromLabel(value);
                   setForm((current) => ({
                     ...current,
                     design_label: value,
-                    concrete_design_id: designIdFromLabel(value),
-                  }))
-                }
+                    concrete_design_id: matched?.id ?? null,
+                    pumpcreate:
+                      matched && matched.pumpcreate != null
+                        ? matched.pumpcreate
+                        : matched
+                          ? ""
+                          : current.pumpcreate,
+                  }));
+                }}
                 submitOnEnter={() => setTimeout(() => void saveSale(), 0)}
               />
               <SuggestionTextInput
@@ -871,6 +994,19 @@ export function SalesPage() {
                   }))
                 }
               />
+              {(getDesignFromLabel(form.design_label)?.pumpcreate != null || form.pumpcreate !== "") && (
+                <NumberInput
+                  label="Pumpcrete"
+                  min={0}
+                  value={form.pumpcreate}
+                  onChange={(value) =>
+                    setForm((current) => ({
+                      ...current,
+                      pumpcreate: Number(value) || "",
+                    }))
+                  }
+                />
+              )}
               <NumberInput
                 label="Total"
                 value={total}
@@ -968,7 +1104,7 @@ export function SalesPage() {
                 <ScrollArea type="auto">
                   <Table
                     className="batchSalesTable"
-                    miw={1060}
+                    miw={800}
                     verticalSpacing="xs"
                   >
                     <Table.Thead>
@@ -978,10 +1114,9 @@ export function SalesPage() {
                         <Table.Th>Client Name</Table.Th>
                         <Table.Th>Design</Table.Th>
                         <Table.Th>Site</Table.Th>
-                        <Table.Th>Counter Date</Table.Th>
-                        <Table.Th>Counter</Table.Th>
                         <Table.Th>Cubic</Table.Th>
                         <Table.Th>Price</Table.Th>
+                        <Table.Th>Pumpcrete</Table.Th>
                         <Table.Th>Total</Table.Th>
                         <Table.Th aria-label="Actions" />
                       </Table.Tr>
@@ -1042,20 +1177,20 @@ export function SalesPage() {
                                 suggestions={designs.map(
                                   (design) => design.label,
                                 )}
-                                onValueChange={(value) =>
+                                onValueChange={(value) => {
+                                  const matched = getDesignFromLabel(value);
                                   updateBatchDraft(draft.id, {
                                     design_label: value,
-                                    concrete_design_id:
-                                      designIdFromLabel(value),
-                                  })
-                                }
-                                onCommit={(value) =>
+                                    concrete_design_id: matched?.id ?? null,
+                                  });
+                                }}
+                                onCommit={(value) => {
+                                  const matched = getDesignFromLabel(value);
                                   updateBatchDraft(draft.id, {
                                     design_label: value,
-                                    concrete_design_id:
-                                      designIdFromLabel(value),
-                                  })
-                                }
+                                    concrete_design_id: matched?.id ?? null,
+                                  });
+                                }}
                               />
                             </Table.Td>
                             <Table.Td>
@@ -1065,26 +1200,6 @@ export function SalesPage() {
                                 onValueChange={(value) =>
                                   updateBatchDraft(draft.id, {
                                     project_site: value,
-                                  })
-                                }
-                              />
-                            </Table.Td>
-                            <Table.Td>
-                              <DateShortcutInput
-                                value={draft.counter_date}
-                                onChange={(val) =>
-                                  updateBatchDraft(draft.id, {
-                                    counter_date: val,
-                                  })
-                                }
-                              />
-                            </Table.Td>
-                            <Table.Td>
-                              <TextInput
-                                value={draft.counter}
-                                onChange={(event) =>
-                                  updateBatchDraft(draft.id, {
-                                    counter: event.currentTarget.value,
                                   })
                                 }
                               />
@@ -1107,6 +1222,17 @@ export function SalesPage() {
                                 onChange={(value) =>
                                   updateBatchDraft(draft.id, {
                                     unit_price: Number(value) || "",
+                                  })
+                                }
+                              />
+                            </Table.Td>
+                            <Table.Td>
+                              <NumberInput
+                                min={0}
+                                value={draft.pumpcreate}
+                                onChange={(value) =>
+                                  updateBatchDraft(draft.id, {
+                                    pumpcreate: Number(value) || "",
                                   })
                                 }
                               />
@@ -1180,13 +1306,63 @@ export function SalesPage() {
         />
       </Paper>
 
+      {selectedSaleIds.size > 0 && (
+        <Paper withBorder radius="sm" p="xs" style={{ backgroundColor: "var(--mantine-color-blue-light)" }}>
+          <Group justify="space-between">
+            <Badge variant="filled" color="blue">
+              {selectedSaleIds.size} sale(s) selected
+            </Badge>
+            <Group gap="xs">
+              <Button
+                size="xs"
+                leftSection={<Edit3 size={14} />}
+                onClick={startEditSelectedSales}
+              >
+                Edit Selected ({selectedSaleIds.size})
+              </Button>
+              <Button
+                size="xs"
+                color="red"
+                leftSection={<Trash2 size={14} />}
+                onClick={deleteSelectedSales}
+                loading={loading}
+              >
+                Delete Selected ({selectedSaleIds.size})
+              </Button>
+              <Button
+                size="xs"
+                variant="light"
+                onClick={() => {
+                  const selectedRows = rows.filter((r) => selectedSaleIds.has(r.id));
+                  if (selectedRows.length > 0) {
+                    handleCounterClick(selectedRows[0], selectedRows);
+                  }
+                }}
+              >
+                Counter Date ({selectedSaleIds.size})
+              </Button>
+              <Button
+                size="xs"
+                variant="subtle"
+                color="gray"
+                leftSection={<X size={14} />}
+                onClick={() => setSelectedSaleIds(new Set())}
+              >
+                Deselect
+              </Button>
+            </Group>
+          </Group>
+        </Paper>
+      )}
+
       <CustomExcelTable
         columns={saleColumns}
         data={filteredRows}
         onEditClick={(row) => startEditSale(row)}
         onDeleteClick={(row) => deleteSale(row)}
-        selectedRowIds={selectedSaleIds}
-        onSelectionChange={setSelectedSaleIds}
+        withSelection={true}
+        checkedRowIds={selectedSaleIds}
+        onCheckedRowIdsChange={setSelectedSaleIds}
         contextMenuItems={["edit", "delete", "counter_date"]}
         onCounterClick={handleCounterClick}
         renderRowActions={(row) => (

@@ -232,9 +232,9 @@ export function DashboardPage() {
       grabaPaymentsResult,
     ] = await Promise.all([
       supabase
-        .from("sales_billing_summary")
+        .from("sales_records")
         .select(
-          "id,sale_or_number,sale_date,customer_name,concrete_design,total_amount,paid_amount,balance_amount,payment_status",
+          "id,sale_or_number,sale_date,cubic_volume,unit_price,total_amount,pumpcreate,manual_customer_name,payment_status,customers(name),concrete_designs(code,pumpcreate)",
         )
         .order("sale_date", { ascending: false }),
       supabase
@@ -266,7 +266,46 @@ export function DashboardPage() {
       return;
     }
 
-    setSales((salesResult.data ?? []) as unknown as SalesSummaryRecord[]);
+    const rawSales = (salesResult.data ?? []) as any[];
+    const allPaymentsMap = new Map<string, number>();
+    for (const p of (paymentsResult.data ?? []) as any[]) {
+      const current = allPaymentsMap.get(p.sales_record_id) ?? 0;
+      allPaymentsMap.set(p.sales_record_id, current + Number(p.amount || 0));
+    }
+
+    const processedSales: SalesSummaryRecord[] = rawSales.map((record) => {
+      const custName = Array.isArray(record.customers)
+        ? record.customers[0]?.name
+        : record.customers?.name;
+      const customerName = custName ?? record.manual_customer_name ?? "";
+
+      const designCode = Array.isArray(record.concrete_designs)
+        ? record.concrete_designs[0]?.code
+        : record.concrete_designs?.code;
+      const designPumpcreate = Array.isArray(record.concrete_designs)
+        ? record.concrete_designs[0]?.pumpcreate
+        : record.concrete_designs?.pumpcreate;
+
+      const pumpVal = Number(record.pumpcreate ?? designPumpcreate ?? 0);
+      const baseTotal = Number(record.total_amount || 0);
+      const totalAmount = baseTotal + pumpVal;
+      const paidAmount = allPaymentsMap.get(record.id) ?? 0;
+      const balanceAmount = totalAmount - paidAmount;
+
+      return {
+        id: record.id,
+        sale_or_number: Number(record.sale_or_number || 0),
+        sale_date: record.sale_date,
+        customer_name: customerName,
+        concrete_design: designCode ?? "",
+        total_amount: totalAmount,
+        paid_amount: paidAmount,
+        balance_amount: balanceAmount,
+        payment_status: record.payment_status,
+      };
+    });
+
+    setSales(processedSales);
     setPayments((paymentsResult.data ?? []) as unknown as PaymentRecord[]);
     setSupplierBilling(supplierBillingResult.data ?? []);
     setSupplierPayments(supplierPaymentsResult.data ?? []);
