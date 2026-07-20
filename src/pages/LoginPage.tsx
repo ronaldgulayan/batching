@@ -15,10 +15,11 @@ import {
   useMantineTheme,
 } from "@mantine/core";
 import { AlertCircle, Building2, Lock, Mail, LogIn } from "lucide-react";
+import type { Session } from "@supabase/supabase-js";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 
 interface LoginPageProps {
-  onLoginSuccess: () => void;
+  onLoginSuccess: (session?: Session | null) => void;
 }
 
 export function LoginPage({ onLoginSuccess }: LoginPageProps) {
@@ -45,20 +46,23 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
           // If it fails, let's also allow a local admin fallback as a convenience for development
           if (email === "admin@solidbatching.com" && password === "admin123") {
             localStorage.setItem("solid_batching_auth", "true");
-            onLoginSuccess();
+            localStorage.setItem("solid_batching_user_email", email);
+            onLoginSuccess({ user: { email } } as unknown as Session);
             return;
           }
           throw authError;
         }
 
         if (data.session) {
-          onLoginSuccess();
+          localStorage.setItem("solid_batching_user_email", data.session.user?.email || email);
+          onLoginSuccess(data.session);
         }
       } else {
         // Local simulation fallback
         if (email === "admin@solidbatching.com" && password === "admin123") {
           localStorage.setItem("solid_batching_auth", "true");
-          onLoginSuccess();
+          localStorage.setItem("solid_batching_user_email", email);
+          onLoginSuccess({ user: { email } } as unknown as Session);
         } else {
           setError("Invalid local credentials. Use: admin@solidbatching.com / admin123");
         }

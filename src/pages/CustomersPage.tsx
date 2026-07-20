@@ -1,31 +1,36 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  Accordion,
   Alert,
   Badge,
   Button,
   Group,
+  Pagination,
   Paper,
   ScrollArea,
+  SegmentedControl,
   Select,
   SimpleGrid,
   Stack,
   Table,
+  Text,
   TextInput,
 } from "@mantine/core";
-import { AlertCircle, RefreshCw } from "lucide-react";
+import { AlertCircle, RefreshCw, Search, UserCheck } from "lucide-react";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
+import { DateShortcutInput } from "../components/DateShortcutInput";
 
-type ClientRow = {
+type DateMode = "day" | "month" | "year" | "all";
+type StatusFilter = "all" | "unpaid" | "paid";
+
+type SalesPaymentRecord = {
   id: string;
-  client_name: string;
-  sale_or_number: number;
-  sale_date: string;
-  design: string;
-  cubic_volume: number;
-  total_amount: number;
-  paid_amount: number;
-  balance_amount: number;
-  payment_status: string;
+  sales_record_id: string;
+  payment_date: string;
+  amount: number;
+  payment_method: string;
+  reference_number: string | null;
+  remarks: string | null;
 };
 
 type SummaryRecord = {
@@ -41,20 +46,48 @@ type SummaryRecord = {
   payment_status: string;
 };
 
-type ClientGroup = {
-  key: string;
-  clientName: string;
-  rows: ClientRow[];
-  totalAmount: number;
-  latestDate: string;
+type SaleWithPayments = {
+  id: string;
+  sale_or_number: number;
+  sale_date: string;
+  design: string;
+  cubic_volume: number;
+  total_amount: number;
+  paid_amount: number;
+  balance_amount: number;
+  payment_status: string;
+  payments: SalesPaymentRecord[];
 };
 
-function clientKey(name: string) {
-  return name.trim().toLowerCase() || "no-client";
+type ClientGroup = {
+  clientName: string;
+  sales: SaleWithPayments[];
+  totalSalesAmount: number;
+  totalPaidAmount: number;
+  totalBalanceAmount: number;
+  latestDate: string;
+  hasUnpaid: boolean;
+};
+
+function today() {
+  return new Date().toISOString().slice(0, 10);
 }
 
-function clientDateKey(row: ClientRow) {
-  return `${clientKey(row.client_name)}|${row.sale_date}`;
+function thisMonth() {
+  return today().slice(0, 7);
+}
+
+function thisYear() {
+  return today().slice(0, 4);
+}
+
+function yearOptions() {
+  const currentYear = new Date().getFullYear();
+  const options: string[] = [];
+  for (let y = currentYear; y >= 2000; y--) {
+    options.push(String(y));
+  }
+  return options;
 }
 
 function displayMoney(value: number) {
@@ -65,127 +98,153 @@ function displayMoney(value: number) {
 }
 
 export function CustomersPage() {
-  const [rows, setRows] = useState<ClientRow[]>([]);
+  const [salesRecords, setSalesRecords] = useState<SummaryRecord[]>([]);
+  const [salesPayments, setSalesPayments] = useState<SalesPaymentRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // Filters state
   const [search, setSearch] = useState("");
-  const [dateFilter, setDateFilter] = useState("");
-  const [designFilter, setDesignFilter] = useState<string | null>(null);
+  const [dateMode, setDateMode] = useState<DateMode>("month");
+  const [selectedDay, setSelectedDay] = useState(today());
+  const [selectedMonth, setSelectedMonth] = useState(thisMonth());
+  const [selectedYear, setSelectedYear] = useState(thisYear());
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 
-  const designOptions = useMemo(
-    () =>
-      Array.from(new Set(rows.map((row) => row.design).filter(Boolean)))
-        .sort((first, second) => first.localeCompare(second))
-        .map((design) => ({ value: design, label: design })),
-    [rows],
-  );
+  // Pagination state
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
 
-  const filteredRows = useMemo(() => {
-    const query = search.trim().toLowerCase();
-
-    return rows.filter((row) => {
-      if (dateFilter && row.sale_date !== dateFilter) return false;
-      if (designFilter && row.design !== designFilter) return false;
-      if (!query) return true;
-
-      return [
-        row.client_name,
-        row.sale_or_number,
-        row.sale_date,
-        row.design,
-        row.cubic_volume,
-        row.total_amount,
-        row.paid_amount,
-        row.balance_amount,
-        row.payment_status,
-      ]
-        .join(" ")
-        .toLowerCase()
-        .includes(query);
-    });
-  }, [dateFilter, designFilter, rows, search]);
-
-  const groupedRows = useMemo<ClientGroup[]>(() => {
-    const groups = new Map<string, ClientGroup>();
-
-    for (const row of filteredRows) {
-      const key = clientDateKey(row);
-      const group = groups.get(key);
-
-      if (group) {
-        group.rows.push(row);
-        group.totalAmount += row.total_amount;
-        if (row.sale_date > group.latestDate) group.latestDate = row.sale_date;
-      } else {
-        groups.set(key, {
-          key,
-          clientName: row.client_name || "No client",
-          rows: [row],
-          totalAmount: row.total_amount,
-          latestDate: row.sale_date,
-        });
-      }
-    }
-
-    return Array.from(groups.values())
-      .map((group) => ({
-        ...group,
-        rows: [...group.rows].sort((first, second) =>
-          Number(first.sale_or_number) - Number(second.sale_or_number),
-        ),
-      }))
-      .sort((first, second) => {
-        const clientSort = first.clientName.localeCompare(second.clientName);
-        if (clientSort !== 0) return clientSort;
-        return second.latestDate.localeCompare(first.latestDate);
-      });
-  }, [filteredRows]);
+  // Reset page to 1 whenever filters change
+  useEffect(() => {
+    setPage(1);
+  }, [search, dateMode, selectedDay, selectedMonth, selectedYear, statusFilter]);
 
   async function loadClients() {
     if (!isSupabaseConfigured) return;
     setLoading(true);
     setError("");
 
-    const { data, error: loadError } = await supabase
-      .from("sales_billing_summary")
-      .select(
-        "id,sale_or_number,sale_date,customer_name,concrete_design,cubic_volume,total_amount,paid_amount,balance_amount,payment_status",
-      )
-      .order("sale_date", { ascending: false });
+    const [billingRes, paymentsRes] = await Promise.all([
+      supabase
+        .from("sales_billing_summary")
+        .select(
+          "id,sale_or_number,sale_date,customer_name,concrete_design,cubic_volume,total_amount,paid_amount,balance_amount,payment_status",
+        )
+        .order("sale_date", { ascending: false }),
+      supabase
+        .from("sales_payments")
+        .select("id,sales_record_id,payment_date,amount,payment_method,reference_number,remarks")
+        .order("payment_date", { ascending: false }),
+    ]);
 
     setLoading(false);
 
-    if (loadError) {
-      setError(loadError.message);
+    if (billingRes.error || paymentsRes.error) {
+      setError(billingRes.error?.message || paymentsRes.error?.message || "");
       return;
     }
 
-    setRows(
-      ((data ?? []) as unknown as SummaryRecord[]).map((record) => ({
-        id: record.id,
-        client_name: record.customer_name ?? "",
-        sale_or_number: Number(record.sale_or_number || 0),
-        sale_date: record.sale_date,
-        design: record.concrete_design ?? "",
-        cubic_volume: Number(record.cubic_volume || 0),
-        total_amount: Number(record.total_amount || 0),
-        paid_amount: Number(record.paid_amount || 0),
-        balance_amount: Number(record.balance_amount || 0),
-        payment_status: record.payment_status,
-      })),
-    );
+    setSalesRecords((billingRes.data ?? []) as unknown as SummaryRecord[]);
+    setSalesPayments((paymentsRes.data ?? []) as unknown as SalesPaymentRecord[]);
   }
 
   useEffect(() => {
     void loadClients();
   }, []);
 
+  const filteredClientGroups = useMemo<ClientGroup[]>(() => {
+    const searchLower = search.trim().toLowerCase();
+
+    // Group payments by sales_record_id
+    const paymentsMap = new Map<string, SalesPaymentRecord[]>();
+    for (const p of salesPayments) {
+      const list = paymentsMap.get(p.sales_record_id) ?? [];
+      list.push(p);
+      paymentsMap.set(p.sales_record_id, list);
+    }
+
+    // Filter sales records
+    const filteredSales = salesRecords.filter((sale) => {
+      // 1. Client search
+      if (searchLower) {
+        const name = (sale.customer_name || "").toLowerCase();
+        if (!name.includes(searchLower)) return false;
+      }
+
+      // 2. Date filter
+      if (dateMode === "day" && selectedDay) {
+        if (sale.sale_date !== selectedDay) return false;
+      } else if (dateMode === "month" && selectedMonth) {
+        if (!sale.sale_date.startsWith(selectedMonth)) return false;
+      } else if (dateMode === "year" && selectedYear) {
+        if (!sale.sale_date.startsWith(selectedYear)) return false;
+      }
+
+      // 3. Status filter
+      if (statusFilter === "unpaid") {
+        if (sale.payment_status === "paid") return false;
+      } else if (statusFilter === "paid") {
+        if (sale.payment_status !== "paid") return false;
+      }
+
+      return true;
+    });
+
+    // Group filtered sales by Client Name
+    const clientMap = new Map<string, ClientGroup>();
+
+    for (const sale of filteredSales) {
+      const clientName = sale.customer_name?.trim() || "Unspecified Client";
+      const saleWithPayments: SaleWithPayments = {
+        id: sale.id,
+        sale_or_number: Number(sale.sale_or_number || 0),
+        sale_date: sale.sale_date,
+        design: sale.concrete_design || "",
+        cubic_volume: Number(sale.cubic_volume || 0),
+        total_amount: Number(sale.total_amount || 0),
+        paid_amount: Number(sale.paid_amount || 0),
+        balance_amount: Number(sale.balance_amount || 0),
+        payment_status: sale.payment_status,
+        payments: paymentsMap.get(sale.id) || [],
+      };
+
+      const group = clientMap.get(clientName);
+      if (group) {
+        group.sales.push(saleWithPayments);
+        group.totalSalesAmount += saleWithPayments.total_amount;
+        group.totalPaidAmount += saleWithPayments.paid_amount;
+        group.totalBalanceAmount += saleWithPayments.balance_amount;
+        if (saleWithPayments.balance_amount > 0) group.hasUnpaid = true;
+        if (saleWithPayments.sale_date > group.latestDate) group.latestDate = saleWithPayments.sale_date;
+      } else {
+        clientMap.set(clientName, {
+          clientName,
+          sales: [saleWithPayments],
+          totalSalesAmount: saleWithPayments.total_amount,
+          totalPaidAmount: saleWithPayments.paid_amount,
+          totalBalanceAmount: saleWithPayments.balance_amount,
+          latestDate: saleWithPayments.sale_date,
+          hasUnpaid: saleWithPayments.balance_amount > 0,
+        });
+      }
+    }
+
+    return Array.from(clientMap.values()).sort((a, b) => a.clientName.localeCompare(b.clientName));
+  }, [salesRecords, salesPayments, search, dateMode, selectedDay, selectedMonth, selectedYear, statusFilter]);
+
+  const totalPages = Math.ceil(filteredClientGroups.length / pageSize) || 1;
+  const paginatedGroups = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredClientGroups.slice(start, start + pageSize);
+  }, [filteredClientGroups, page, pageSize]);
+
   return (
-    <Stack gap='md'>
-      <div className='formActions'>
+    <Stack gap="md">
+      <div className="formActions">
         <Button
           leftSection={<RefreshCw size={16} />}
-          variant='light'
+          variant="light"
           onClick={loadClients}
           loading={loading}
         >
@@ -196,8 +255,8 @@ export function CustomersPage() {
       {!isSupabaseConfigured && (
         <Alert
           icon={<AlertCircle size={16} />}
-          color='yellow'
-          title='Supabase is not configured'
+          color="yellow"
+          title="Supabase is not configured"
         >
           Supabase credentials are missing from .env.
         </Alert>
@@ -206,121 +265,234 @@ export function CustomersPage() {
       {error && (
         <Alert
           icon={<AlertCircle size={16} />}
-          color='red'
-          title='Database error'
+          color="red"
+          title="Database error"
         >
           {error}
         </Alert>
       )}
 
-      <Paper
-        withBorder
-        radius='sm'
-        p='md'
-        className='masterPanel'
-      >
-        <Stack gap='md'>
-          <Group justify='space-between'>
-            <Badge variant='outline'>Clients List</Badge>
-            <Badge variant='light'>
-              {filteredRows.length} of {rows.length} records
+      {/* Filter Panel */}
+      <Paper withBorder radius="sm" p="md" className="masterPanel">
+        <Stack gap="md">
+          <Group justify="space-between">
+            <Group gap="xs">
+              <UserCheck size={18} />
+              <Text fw={700}>Client Directory</Text>
+            </Group>
+            <Badge variant="light">
+              Showing {filteredClientGroups.length} clients
             </Badge>
           </Group>
-          <SimpleGrid
-            cols={{ base: 1, sm: 3 }}
-            spacing='sm'
-          >
+
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="sm">
             <TextInput
-              placeholder='Search any'
+              label="Client Name"
+              placeholder="Search client name..."
+              leftSection={<Search size={16} />}
               value={search}
               onChange={(event) => setSearch(event.currentTarget.value)}
             />
-            <TextInput
-              type='date'
-              value={dateFilter}
-              onChange={(event) => setDateFilter(event.currentTarget.value)}
-            />
-            <Select
-              placeholder='Filter by design'
-              data={designOptions}
-              value={designFilter}
-              onChange={setDesignFilter}
-              clearable
-              searchable
-            />
+
+            <Stack gap={2}>
+              <Text size="sm" fw={500}>
+                Date Filter Mode
+              </Text>
+              <SegmentedControl
+                size="xs"
+                value={dateMode}
+                onChange={(val) => setDateMode(val as DateMode)}
+                data={[
+                  { label: "Day", value: "day" },
+                  { label: "Month", value: "month" },
+                  { label: "Year", value: "year" },
+                  { label: "All", value: "all" },
+                ]}
+              />
+            </Stack>
+
+            {dateMode === "day" && (
+              <DateShortcutInput
+                label="Date"
+                value={selectedDay}
+                onChange={(val) => setSelectedDay(val)}
+              />
+            )}
+
+            {dateMode === "month" && (
+              <TextInput
+                label="Month"
+                type="month"
+                value={selectedMonth}
+                onChange={(event) => setSelectedMonth(event.currentTarget.value)}
+              />
+            )}
+
+            {dateMode === "year" && (
+              <Select
+                label="Year"
+                data={yearOptions()}
+                value={selectedYear}
+                onChange={(val) => setSelectedYear(val || thisYear())}
+              />
+            )}
+
+            <Stack gap={2}>
+              <Text size="sm" fw={500}>
+                Payment Status
+              </Text>
+              <SegmentedControl
+                size="xs"
+                value={statusFilter}
+                onChange={(val) => setStatusFilter(val as StatusFilter)}
+                data={[
+                  { label: "All", value: "all" },
+                  { label: "Unpaid", value: "unpaid" },
+                  { label: "Paid", value: "paid" },
+                ]}
+              />
+            </Stack>
           </SimpleGrid>
         </Stack>
       </Paper>
 
-      <Paper
-        withBorder
-        radius='sm'
-        p='md'
-        className='masterPanel'
-      >
-        <ScrollArea type='auto'>
-          <Table
-            withTableBorder
-            withColumnBorders
-          >
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Client</Table.Th>
-                <Table.Th>OR</Table.Th>
-                <Table.Th>Date</Table.Th>
-                <Table.Th>Design</Table.Th>
-                <Table.Th>Cubic</Table.Th>
-                <Table.Th>Amount</Table.Th>
-                <Table.Th>Paid</Table.Th>
-                <Table.Th>Unpaid</Table.Th>
-                <Table.Th>Status</Table.Th>
-                <Table.Th>Total</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {groupedRows.map((group) =>
-                group.rows.map((row, index) => {
-                  const isPaid = row.payment_status === "paid";
-
-                  return (
-                    <Table.Tr key={row.id}>
-                      {index === 0 && (
-                        <Table.Td rowSpan={group.rows.length}>
-                          {group.clientName}
-                        </Table.Td>
-                      )}
-                      <Table.Td>{row.sale_or_number}</Table.Td>
-                      <Table.Td>{row.sale_date}</Table.Td>
-                      <Table.Td>{row.design}</Table.Td>
-                      <Table.Td>{row.cubic_volume}</Table.Td>
-                      <Table.Td>{displayMoney(row.total_amount)}</Table.Td>
-                      <Table.Td>{displayMoney(row.paid_amount)}</Table.Td>
-                      <Table.Td>{displayMoney(row.balance_amount)}</Table.Td>
-                      <Table.Td>
-                        <Badge
-                          color={isPaid ? "green" : "red"}
-                          variant='light'
-                        >
-                          {isPaid ? "paid" : "unpaid"}
+      {/* Accordion Client List */}
+      <Paper withBorder radius="sm" p="md" className="masterPanel">
+        <Stack gap="md">
+          <Accordion variant="separated" radius="md">
+            {paginatedGroups.map((client) => (
+              <Accordion.Item
+                key={client.clientName}
+                value={client.clientName}
+                style={{
+                  border: "1px solid rgba(255, 255, 255, 0.08)",
+                  background: "#111622",
+                  marginBottom: "8px",
+                }}
+              >
+                <Accordion.Control>
+                  <Group justify="space-between" wrap="nowrap" pr="md">
+                    <Group gap="sm">
+                      <Text fw={700} size="md" c="white">
+                        {client.clientName}
+                      </Text>
+                      <Badge size="xs" variant="light" color="blue">
+                        {client.sales.length} order{client.sales.length > 1 ? "s" : ""}
+                      </Badge>
+                    </Group>
+                    <Group gap="xs">
+                      {client.hasUnpaid ? (
+                        <Badge color="red" variant="light" size="sm">
+                          Unpaid: {displayMoney(client.totalBalanceAmount)}
                         </Badge>
-                      </Table.Td>
-                      {index === 0 && (
-                        <Table.Td rowSpan={group.rows.length}>
-                          {displayMoney(group.totalAmount)}
-                        </Table.Td>
+                      ) : (
+                        <Badge color="green" variant="light" size="sm">
+                          Fully Paid
+                        </Badge>
                       )}
-                    </Table.Tr>
-                  );
-                }),
-              )}
-              {!groupedRows.length && (
-                <Table.Tr>
-                  <Table.Td colSpan={10}>No clients to display</Table.Td>
-                </Table.Tr>
-              )}
-            </Table.Tbody>
-          </Table>
-        </ScrollArea>
+                      <Text size="sm" fw={600} c="gray.3">
+                        Total: {displayMoney(client.totalSalesAmount)}
+                      </Text>
+                    </Group>
+                  </Group>
+                </Accordion.Control>
+                <Accordion.Panel>
+                  <ScrollArea type="auto">
+                    <Table withTableBorder withColumnBorders highlightOnHover verticalSpacing="xs">
+                      <Table.Thead>
+                        <Table.Tr>
+                          <Table.Th>OR #</Table.Th>
+                          <Table.Th>Date</Table.Th>
+                          <Table.Th>Design</Table.Th>
+                          <Table.Th>Cubic (m³)</Table.Th>
+                          <Table.Th>Total Amount</Table.Th>
+                          <Table.Th>Paid Amount</Table.Th>
+                          <Table.Th>Balance</Table.Th>
+                          <Table.Th>Status</Table.Th>
+                          <Table.Th>Payments Received</Table.Th>
+                        </Table.Tr>
+                      </Table.Thead>
+                      <Table.Tbody>
+                        {client.sales.map((sale) => {
+                          const isPaid = sale.payment_status === "paid";
+                          return (
+                            <Table.Tr key={sale.id}>
+                              <Table.Td fw={700}>{sale.sale_or_number}</Table.Td>
+                              <Table.Td>{sale.sale_date}</Table.Td>
+                              <Table.Td>{sale.design}</Table.Td>
+                              <Table.Td>{sale.cubic_volume}</Table.Td>
+                              <Table.Td fw={700}>{displayMoney(sale.total_amount)}</Table.Td>
+                              <Table.Td c="green.4">{displayMoney(sale.paid_amount)}</Table.Td>
+                              <Table.Td c={sale.balance_amount > 0 ? "red.4" : "dimmed"}>
+                                {displayMoney(sale.balance_amount)}
+                              </Table.Td>
+                              <Table.Td>
+                                <Badge color={isPaid ? "green" : "red"} variant="light" size="xs">
+                                  {isPaid ? "Paid" : "Unpaid"}
+                                </Badge>
+                              </Table.Td>
+                              <Table.Td>
+                                {sale.payments.length > 0 ? (
+                                  <Stack gap={4}>
+                                    {sale.payments.map((pm) => (
+                                      <Group key={pm.id} gap={6}>
+                                        <Badge size="xs" color={pm.payment_method === "CK" ? "orange" : "blue"} variant="outline">
+                                          {pm.payment_method}
+                                        </Badge>
+                                        {pm.reference_number && (
+                                          <Text size="xs" c="dimmed">
+                                            Ref: {pm.reference_number}
+                                          </Text>
+                                        )}
+                                        <Text size="xs" fw={600}>
+                                          {displayMoney(pm.amount)}
+                                        </Text>
+                                        <Text size="xs" c="dimmed">
+                                          ({pm.payment_date})
+                                        </Text>
+                                      </Group>
+                                    ))}
+                                  </Stack>
+                                ) : (
+                                  <Text size="xs" c="dimmed">
+                                    No payments recorded
+                                  </Text>
+                                )}
+                              </Table.Td>
+                            </Table.Tr>
+                          );
+                        })}
+                      </Table.Tbody>
+                    </Table>
+                  </ScrollArea>
+                </Accordion.Panel>
+              </Accordion.Item>
+            ))}
+          </Accordion>
+
+          {!filteredClientGroups.length && (
+            <Text c="dimmed" style={{ textAlign: "center", padding: "40px" }}>
+              No clients found matching the selected filters.
+            </Text>
+          )}
+
+          {/* Pagination */}
+          {filteredClientGroups.length > 0 && (
+            <Group justify="space-between" align="center" mt="md">
+              <Text size="xs" c="dimmed">
+                Page {page} of {totalPages} ({filteredClientGroups.length} total clients)
+              </Text>
+              <Pagination
+                value={page}
+                onChange={setPage}
+                total={totalPages}
+                color="blue"
+                size="sm"
+                radius="md"
+              />
+            </Group>
+          )}
+        </Stack>
       </Paper>
     </Stack>
   );

@@ -8,6 +8,7 @@ import {
   Progress,
   ScrollArea,
   SegmentedControl,
+  Select,
   SimpleGrid,
   Stack,
   Table,
@@ -60,6 +61,15 @@ function thisMonth() {
 
 function thisYear() {
   return today().slice(0, 4);
+}
+
+function yearOptions() {
+  const currentYear = new Date().getFullYear();
+  const options: string[] = [];
+  for (let y = currentYear; y >= 2000; y--) {
+    options.push(String(y));
+  }
+  return options;
 }
 
 function displayDate(value: string) {
@@ -168,9 +178,35 @@ function buildUnpaidSummary(rows: SalesSummaryRecord[]) {
   });
 }
 
+type ClientChequeItem = {
+  id: string;
+  customer_name: string;
+  ck_number: string;
+  payment_date: string;
+  amount: number;
+};
+
+type SupplierUnpaidItem = {
+  supplier_name: string;
+  unpaidAmount: number;
+  records: number;
+};
+
+type SupplierChequeItem = {
+  id: string;
+  supplier_name: string;
+  ck_number: string;
+  payment_date: string;
+  amount: number;
+};
+
 export function DashboardPage() {
   const [sales, setSales] = useState<SalesSummaryRecord[]>([]);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
+  const [supplierBilling, setSupplierBilling] = useState<any[]>([]);
+  const [supplierPayments, setSupplierPayments] = useState<any[]>([]);
+  const [grabaSummary, setGrabaSummary] = useState<any[]>([]);
+  const [grabaPayments, setGrabaPayments] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [periodMode, setPeriodMode] = useState<PeriodMode>("month");
@@ -187,7 +223,14 @@ export function DashboardPage() {
     setLoading(true);
     setError("");
 
-    const [salesResult, paymentsResult] = await Promise.all([
+    const [
+      salesResult,
+      paymentsResult,
+      supplierBillingResult,
+      supplierPaymentsResult,
+      grabaSummaryResult,
+      grabaPaymentsResult,
+    ] = await Promise.all([
       supabase
         .from("sales_billing_summary")
         .select(
@@ -196,7 +239,23 @@ export function DashboardPage() {
         .order("sale_date", { ascending: false }),
       supabase
         .from("sales_payments")
-        .select("id,sales_record_id,payment_date,amount,payment_method")
+        .select("id,sales_record_id,payment_date,amount,payment_method,reference_number,remarks")
+        .order("payment_date", { ascending: false }),
+      supabase
+        .from("supplier_billing_summary")
+        .select("id,dr_number,transaction_date,supplier_name,item_name,total_amount,paid_amount,balance_amount,payment_status")
+        .order("transaction_date", { ascending: false }),
+      supabase
+        .from("supplier_payments")
+        .select("id,supplier_transaction_id,payment_date,amount,ck_number,remarks")
+        .order("payment_date", { ascending: false }),
+      supabase
+        .from("graba_summary")
+        .select("id,graba_dr_number,graba_date,supplier_name,items,total_amount,paid_amount,balance_amount,payment_status")
+        .order("graba_date", { ascending: false }),
+      supabase
+        .from("graba_payments")
+        .select("id,graba_record_id,payment_date,amount,payment_method,reference_number,remarks")
         .order("payment_date", { ascending: false }),
     ]);
 
@@ -209,11 +268,97 @@ export function DashboardPage() {
 
     setSales((salesResult.data ?? []) as unknown as SalesSummaryRecord[]);
     setPayments((paymentsResult.data ?? []) as unknown as PaymentRecord[]);
+    setSupplierBilling(supplierBillingResult.data ?? []);
+    setSupplierPayments(supplierPaymentsResult.data ?? []);
+    setGrabaSummary(grabaSummaryResult.data ?? []);
+    setGrabaPayments(grabaPaymentsResult.data ?? []);
   }
 
   useEffect(() => {
     void loadDashboard();
   }, []);
+
+  const clientCheques = useMemo<ClientChequeItem[]>(() => {
+    const salesMap = new Map(sales.map((s) => [s.id, s.customer_name || "Unspecified Client"]));
+    const list: ClientChequeItem[] = [];
+
+    for (const p of payments as any[]) {
+      const method = String(p.payment_method || "").toUpperCase();
+      const ref = p.reference_number || "";
+      if (method === "CK" || ref.toUpperCase().startsWith("CK") || (ref && method !== "CASH")) {
+        list.push({
+          id: p.id,
+          customer_name: salesMap.get(p.sales_record_id) || "Unspecified Client",
+          ck_number: ref || "CK Check",
+          payment_date: p.payment_date,
+          amount: Number(p.amount || 0),
+        });
+      }
+    }
+    return list.sort((a, b) => b.payment_date.localeCompare(a.payment_date));
+  }, [sales, payments]);
+
+  const supplierUnpaidList = useMemo<SupplierUnpaidItem[]>(() => {
+    const map = new Map<string, SupplierUnpaidItem>();
+
+    for (const s of supplierBilling) {
+      const unpaid = Number(s.balance_amount || 0);
+      if (unpaid > 0) {
+        const name = s.supplier_name || "Unspecified Supplier";
+        const item = map.get(name) ?? { supplier_name: name, unpaidAmount: 0, records: 0 };
+        item.unpaidAmount += unpaid;
+        item.records += 1;
+        map.set(name, item);
+      }
+    }
+
+    for (const g of grabaSummary) {
+      const unpaid = Number(g.balance_amount || 0);
+      if (unpaid > 0) {
+        const name = g.supplier_name || "Unspecified Supplier";
+        const item = map.get(name) ?? { supplier_name: name, unpaidAmount: 0, records: 0 };
+        item.unpaidAmount += unpaid;
+        item.records += 1;
+        map.set(name, item);
+      }
+    }
+
+    return Array.from(map.values()).sort((a, b) => b.unpaidAmount - a.unpaidAmount);
+  }, [supplierBilling, grabaSummary]);
+
+  const supplierCheques = useMemo<SupplierChequeItem[]>(() => {
+    const suppMap = new Map(supplierBilling.map((s) => [s.id, s.supplier_name || "Unspecified Supplier"]));
+    const grabaMap = new Map(grabaSummary.map((g) => [g.id, g.supplier_name || "Unspecified Supplier"]));
+    const list: SupplierChequeItem[] = [];
+
+    for (const p of supplierPayments) {
+      if (p.ck_number) {
+        list.push({
+          id: p.id,
+          supplier_name: suppMap.get(p.supplier_transaction_id) || "Unspecified Supplier",
+          ck_number: p.ck_number,
+          payment_date: p.payment_date,
+          amount: Number(p.amount || 0),
+        });
+      }
+    }
+
+    for (const p of grabaPayments) {
+      const method = String(p.payment_method || "").toUpperCase();
+      const ref = p.reference_number || "";
+      if (method === "CK" || ref.toUpperCase().startsWith("CK") || (ref && method !== "CASH")) {
+        list.push({
+          id: p.id,
+          supplier_name: grabaMap.get(p.graba_record_id) || "Unspecified Supplier",
+          ck_number: ref || "CK Check",
+          payment_date: p.payment_date,
+          amount: Number(p.amount || 0),
+        });
+      }
+    }
+
+    return list.sort((a, b) => b.payment_date.localeCompare(a.payment_date));
+  }, [supplierBilling, grabaSummary, supplierPayments, grabaPayments]);
 
   const filteredSales = useMemo(
     () => sales.filter((row) => dateInPeriod(row.sale_date, periodMode, filters)),
@@ -356,15 +501,14 @@ export function DashboardPage() {
               />
             )}
             {periodMode === "year" && (
-              <TextInput
+              <Select
                 label='Year'
-                type='number'
-                min={2000}
+                data={yearOptions()}
                 value={filters.year}
-                onChange={(event) =>
+                onChange={(val) =>
                   setFilters((current) => ({
                     ...current,
-                    year: event.currentTarget.value,
+                    year: val || thisYear(),
                   }))
                 }
               />
@@ -552,6 +696,13 @@ export function DashboardPage() {
         </Paper>
       </SimpleGrid>
 
+      {/* 3 Cards: Client Cheques, Supplier Unpaid, Supplier Cheques */}
+      <SimpleGrid cols={{ base: 1, md: 3 }} spacing="md">
+        <ClientChequesCard items={clientCheques} />
+        <SupplierUnpaidCard items={supplierUnpaidList} />
+        <SupplierChequesCard items={supplierCheques} />
+      </SimpleGrid>
+
       <Paper
         withBorder
         radius='sm'
@@ -596,6 +747,211 @@ export function DashboardPage() {
         </Stack>
       </Paper>
     </Stack>
+  );
+}
+
+function ClientChequesCard({ items }: { items: ClientChequeItem[] }) {
+  const totalAmount = useMemo(() => items.reduce((sum, item) => sum + item.amount, 0), [items]);
+
+  return (
+    <Paper withBorder radius="sm" p="md" className="masterPanel">
+      <Stack gap="xs">
+        <Group justify="space-between">
+          <Group gap="xs">
+            <ThemeIcon size={28} radius="md" color="blue" variant="light">
+              <CreditCard size={16} />
+            </ThemeIcon>
+            <div>
+              <Text fw={700} size="sm">Client Cheques</Text>
+              <Text size="xs" c="dimmed">Pending Deposit ({items.length})</Text>
+            </div>
+          </Group>
+          <Badge color="blue" variant="light">
+            {displayMoney(totalAmount)}
+          </Badge>
+        </Group>
+
+        <ScrollArea h={220} type="auto">
+          <Stack gap="xs">
+            {items.map((item, index) => (
+              <Paper
+                key={`${item.id}-${index}`}
+                p="xs"
+                style={{
+                  backgroundColor: "rgba(255, 255, 255, 0.03)",
+                  border: "1px solid rgba(255, 255, 255, 0.06)",
+                  borderRadius: "6px",
+                }}
+              >
+                <Group justify="space-between" align="flex-start" wrap="nowrap">
+                  <div>
+                    <Text size="xs" fw={700} c="white">
+                      {item.customer_name}
+                    </Text>
+                    <Group gap={6} mt={2}>
+                      <Badge size="xs" color="gray" variant="outline">
+                        CK: {item.ck_number || "N/A"}
+                      </Badge>
+                      <Text size="xs" c="dimmed">
+                        {displayDate(item.payment_date)}
+                      </Text>
+                    </Group>
+                  </div>
+                  <Stack gap={2} align="flex-end">
+                    <Text size="xs" fw={700} c="blue.4">
+                      {displayMoney(item.amount)}
+                    </Text>
+                    <Badge size="xs" color="yellow" variant="light">
+                      Pending Deposit
+                    </Badge>
+                  </Stack>
+                </Group>
+              </Paper>
+            ))}
+            {!items.length && (
+              <Text size="xs" c="dimmed" style={{ textAlign: "center", paddingTop: "50px" }}>
+                No pending client cheques
+              </Text>
+            )}
+          </Stack>
+        </ScrollArea>
+      </Stack>
+    </Paper>
+  );
+}
+
+function SupplierUnpaidCard({ items }: { items: SupplierUnpaidItem[] }) {
+  const totalAmount = useMemo(() => items.reduce((sum, item) => sum + item.unpaidAmount, 0), [items]);
+
+  return (
+    <Paper withBorder radius="sm" p="md" className="masterPanel">
+      <Stack gap="xs">
+        <Group justify="space-between">
+          <Group gap="xs">
+            <ThemeIcon size={28} radius="md" color="red" variant="light">
+              <ReceiptText size={16} />
+            </ThemeIcon>
+            <div>
+              <Text fw={700} size="sm">Supplier Unpaid</Text>
+              <Text size="xs" c="dimmed">Unpaid Accounts ({items.length})</Text>
+            </div>
+          </Group>
+          <Badge color="red" variant="light">
+            {displayMoney(totalAmount)}
+          </Badge>
+        </Group>
+
+        <ScrollArea h={220} type="auto">
+          <Stack gap="xs">
+            {items.map((item) => (
+              <Paper
+                key={item.supplier_name}
+                p="xs"
+                style={{
+                  backgroundColor: "rgba(255, 255, 255, 0.03)",
+                  border: "1px solid rgba(255, 255, 255, 0.06)",
+                  borderRadius: "6px",
+                }}
+              >
+                <Group justify="space-between" align="flex-start" wrap="nowrap">
+                  <div>
+                    <Text size="xs" fw={700} c="white">
+                      {item.supplier_name}
+                    </Text>
+                    <Text size="xs" c="dimmed" mt={2}>
+                      {item.records} unpaid record{item.records > 1 ? "s" : ""}
+                    </Text>
+                  </div>
+                  <Stack gap={2} align="flex-end">
+                    <Text size="xs" fw={700} c="red.4">
+                      {displayMoney(item.unpaidAmount)}
+                    </Text>
+                    <Badge size="xs" color="red" variant="light">
+                      Unpaid
+                    </Badge>
+                  </Stack>
+                </Group>
+              </Paper>
+            ))}
+            {!items.length && (
+              <Text size="xs" c="dimmed" style={{ textAlign: "center", paddingTop: "50px" }}>
+                No unpaid supplier balances
+              </Text>
+            )}
+          </Stack>
+        </ScrollArea>
+      </Stack>
+    </Paper>
+  );
+}
+
+function SupplierChequesCard({ items }: { items: SupplierChequeItem[] }) {
+  const totalAmount = useMemo(() => items.reduce((sum, item) => sum + item.amount, 0), [items]);
+
+  return (
+    <Paper withBorder radius="sm" p="md" className="masterPanel">
+      <Stack gap="xs">
+        <Group justify="space-between">
+          <Group gap="xs">
+            <ThemeIcon size={28} radius="md" color="orange" variant="light">
+              <WalletCards size={16} />
+            </ThemeIcon>
+            <div>
+              <Text fw={700} size="sm">Supplier Cheques</Text>
+              <Text size="xs" c="dimmed">Pending Clearance/Deposit ({items.length})</Text>
+            </div>
+          </Group>
+          <Badge color="orange" variant="light">
+            {displayMoney(totalAmount)}
+          </Badge>
+        </Group>
+
+        <ScrollArea h={220} type="auto">
+          <Stack gap="xs">
+            {items.map((item, index) => (
+              <Paper
+                key={`${item.id}-${index}`}
+                p="xs"
+                style={{
+                  backgroundColor: "rgba(255, 255, 255, 0.03)",
+                  border: "1px solid rgba(255, 255, 255, 0.06)",
+                  borderRadius: "6px",
+                }}
+              >
+                <Group justify="space-between" align="flex-start" wrap="nowrap">
+                  <div>
+                    <Text size="xs" fw={700} c="white">
+                      {item.supplier_name}
+                    </Text>
+                    <Group gap={6} mt={2}>
+                      <Badge size="xs" color="gray" variant="outline">
+                        CK: {item.ck_number || "N/A"}
+                      </Badge>
+                      <Text size="xs" c="dimmed">
+                        {displayDate(item.payment_date)}
+                      </Text>
+                    </Group>
+                  </div>
+                  <Stack gap={2} align="flex-end">
+                    <Text size="xs" fw={700} c="orange.4">
+                      {displayMoney(item.amount)}
+                    </Text>
+                    <Badge size="xs" color="orange" variant="light">
+                      Pending Deposit
+                    </Badge>
+                  </Stack>
+                </Group>
+              </Paper>
+            ))}
+            {!items.length && (
+              <Text size="xs" c="dimmed" style={{ textAlign: "center", paddingTop: "50px" }}>
+                No pending supplier cheques
+              </Text>
+            )}
+          </Stack>
+        </ScrollArea>
+      </Stack>
+    </Paper>
   );
 }
 

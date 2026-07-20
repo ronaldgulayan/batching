@@ -125,7 +125,6 @@ export function GrabaPage() {
   const [itemsOptions, setItemsOptions] = useState<{ item: string; price: number }[]>([]);
   const [trucksOptions, setTrucksOptions] = useState<string[]>([]);
   const [form, setForm] = useState<GrabaForm>(emptyForm);
-  const [nextDrNumber, setNextDrNumber] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -173,16 +172,6 @@ export function GrabaPage() {
       if (loadError) throw new Error(loadError.message);
 
       const records = (data ?? []) as unknown as GrabaRecord[];
-      const nextNumber =
-        records.reduce((max, record) => {
-          const num = Number(record.graba_dr_number);
-          return isNaN(num) ? max : Math.max(max, num);
-        }, 0) + 1;
-
-      setNextDrNumber(nextNumber);
-      if (!editingId) {
-        setForm((current) => ({ ...current, graba_dr_number: current.graba_dr_number || String(nextNumber) }));
-      }
       setRows(
         records.map((record) => {
           const paymentsList = Array.isArray(record.graba_payments)
@@ -257,13 +246,8 @@ export function GrabaPage() {
     }
 
     const drNumber = form.graba_dr_number.trim();
-    const numericDr = Number(drNumber);
-    if (!editingId && !isNaN(numericDr) && numericDr < nextDrNumber) {
-      setError(`DR must be ${nextDrNumber} or higher. Used or skipped numbers cannot be reused.`);
-      return;
-    }
 
-    if (!form.graba_date || !form.supplier_name.trim() || !form.items.trim()) {
+    if (!form.graba_date || !drNumber || !form.supplier_name.trim() || !form.items.trim()) {
       setError("Date, DR, Supplier Name, and Items are required.");
       return;
     }
@@ -305,9 +289,7 @@ export function GrabaPage() {
       setMessage(editingId ? `Updated GRABA DR ${drNumber}.` : `Saved GRABA DR ${drNumber}.`);
       setEditingId(null);
       
-      const nextNumVal = Number(drNumber);
-      const nextDrStr = !isNaN(nextNumVal) ? String(nextNumVal + 1) : String(nextDrNumber);
-      setForm({ ...emptyForm, graba_dr_number: editingId ? String(nextDrNumber) : nextDrStr });
+      setForm(emptyForm);
       await loadRows();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to save GRABA.");
@@ -334,7 +316,7 @@ export function GrabaPage() {
 
   function cancelEdit() {
     setEditingId(null);
-    setForm({ ...emptyForm, graba_dr_number: String(nextDrNumber) });
+    setForm(emptyForm);
   }
 
   async function deleteGraba(row: GrabaRow) {
@@ -402,6 +384,7 @@ export function GrabaPage() {
               <TextInput
                 label="DR"
                 placeholder="DR reference no."
+                required
                 value={form.graba_dr_number}
                 onChange={(event) => setForm((current) => ({ ...current, graba_dr_number: event.currentTarget.value }))}
               />
@@ -500,7 +483,6 @@ export function GrabaPage() {
                   Refresh
                 </Button>
               </Group>
-              <Badge variant="light">Next DR: {nextDrNumber}</Badge>
             </Group>
           </Stack>
         </form>

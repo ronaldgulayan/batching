@@ -44,13 +44,29 @@ export function App() {
     if (isSupabaseConfigured) {
       // Check initial session
       supabase.auth.getSession().then(({ data: { session } }) => {
-        setSession(session);
+        if (session) {
+          setSession(session);
+        } else {
+          const savedAuth = localStorage.getItem("solid_batching_auth");
+          const savedEmail = localStorage.getItem("solid_batching_user_email") || "admin@solidbatching.com";
+          if (savedAuth === "true") {
+            setSession({ user: { email: savedEmail } } as unknown as Session);
+          }
+        }
         setCheckingAuth(false);
       });
 
       // Listen to auth changes
       const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-        setSession(session);
+        if (session) {
+          setSession(session);
+        } else {
+          const savedAuth = localStorage.getItem("solid_batching_auth");
+          const savedEmail = localStorage.getItem("solid_batching_user_email") || "admin@solidbatching.com";
+          if (savedAuth === "true") {
+            setSession({ user: { email: savedEmail } } as unknown as Session);
+          }
+        }
       });
 
       return () => {
@@ -59,8 +75,9 @@ export function App() {
     } else {
       // Check simulated session
       const savedAuth = localStorage.getItem("solid_batching_auth");
+      const savedEmail = localStorage.getItem("solid_batching_user_email") || "admin@solidbatching.com";
       if (savedAuth === "true") {
-        setSession({} as Session);
+        setSession({ user: { email: savedEmail } } as unknown as Session);
       }
       setCheckingAuth(false);
     }
@@ -71,6 +88,7 @@ export function App() {
       await supabase.auth.signOut();
     }
     localStorage.removeItem("solid_batching_auth");
+    localStorage.removeItem("solid_batching_user_email");
     setSession(null);
   };
 
@@ -86,10 +104,19 @@ export function App() {
   }
 
   if (!session) {
-    return <LoginPage onLoginSuccess={() => setSession({} as Session)} />;
+    return (
+      <LoginPage
+        onLoginSuccess={(newSession) =>
+          setSession(newSession || ({ user: { email: "admin@solidbatching.com" } } as unknown as Session))
+        }
+      />
+    );
   }
 
-  const userEmail = isSupabaseConfigured ? session.user?.email : "admin@solidbatching.com";
+  const userEmail =
+    session.user?.email ||
+    localStorage.getItem("solid_batching_user_email") ||
+    "admin@solidbatching.com";
 
   return (
     <AppShell

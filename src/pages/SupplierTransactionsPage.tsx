@@ -100,7 +100,6 @@ export function SupplierTransactionsPage() {
   const [suppliersOptions, setSuppliersOptions] = useState<string[]>([]);
   const [itemsOptions, setItemsOptions] = useState<string[]>([]);
   const [form, setForm] = useState<SupplierForm>(emptyForm);
-  const [nextDrNumber, setNextDrNumber] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -144,16 +143,6 @@ export function SupplierTransactionsPage() {
       if (loadError) throw new Error(loadError.message);
 
       const records = (data ?? []) as unknown as SupplierRecord[];
-      const nextNumber =
-        records.reduce((max, r) => {
-          const num = Number(r.dr_number);
-          return isNaN(num) ? max : Math.max(max, num);
-        }, 0) + 1;
-
-      setNextDrNumber(nextNumber);
-      if (!editingId) {
-        setForm((current) => ({ ...current, dr_number: current.dr_number || String(nextNumber) }));
-      }
       setRows(
         records.map((r) => {
           const paymentsList = Array.isArray(r.supplier_payments)
@@ -195,13 +184,8 @@ export function SupplierTransactionsPage() {
     }
 
     const drNumber = form.dr_number.trim();
-    const numericDr = Number(drNumber);
-    if (!editingId && !isNaN(numericDr) && numericDr < nextDrNumber) {
-      setError(`DR must be ${nextDrNumber} or higher. Used or skipped numbers cannot be reused.`);
-      return;
-    }
 
-    if (!form.transaction_date || !form.supplier_name.trim() || !form.item_name.trim() || !form.qty || !form.price) {
+    if (!form.transaction_date || !drNumber || !form.supplier_name.trim() || !form.item_name.trim() || !form.qty || !form.price) {
       setError("Date, DR, Supplier Name, Item, Qty, and Price are required.");
       return;
     }
@@ -237,9 +221,7 @@ export function SupplierTransactionsPage() {
       setMessage(editingId ? `Updated DR ${drNumber}.` : `Saved DR ${drNumber}.`);
       setEditingId(null);
       
-      const nextNumVal = Number(drNumber);
-      const nextDrStr = !isNaN(nextNumVal) ? String(nextNumVal + 1) : String(nextDrNumber);
-      setForm({ ...emptyForm, dr_number: editingId ? String(nextDrNumber) : nextDrStr });
+      setForm(emptyForm);
       await loadRows();
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Unable to save transaction.");
@@ -263,7 +245,7 @@ export function SupplierTransactionsPage() {
 
   function cancelEdit() {
     setEditingId(null);
-    setForm({ ...emptyForm, dr_number: String(nextDrNumber) });
+    setForm(emptyForm);
   }
 
   async function deleteTransaction(row: SupplierRow) {
@@ -316,6 +298,7 @@ export function SupplierTransactionsPage() {
               <TextInput
                 label="DR"
                 placeholder="DR reference no."
+                required
                 value={form.dr_number}
                 onChange={(event) => setForm((current) => ({ ...current, dr_number: event.currentTarget.value }))}
               />
@@ -366,7 +349,6 @@ export function SupplierTransactionsPage() {
                   Refresh
                 </Button>
               </Group>
-              <Badge variant="light">Next DR: {nextDrNumber}</Badge>
             </Group>
           </Stack>
         </form>
