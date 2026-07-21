@@ -448,6 +448,15 @@ export function CustomExcelTable<T extends { id: string | number }>({
 
       const key = col.key.toLowerCase();
       if (
+        key.includes("or_number") ||
+        key.includes("dr_number") ||
+        key === "or" ||
+        key === "dr"
+      ) {
+        return String(value);
+      }
+
+      if (
         key.includes("price") ||
         key.includes("amount") ||
         key.includes("total") ||
@@ -647,12 +656,12 @@ export function CustomExcelTable<T extends { id: string | number }>({
                       <Checkbox
                         style={{ cursor: "pointer" }}
                         styles={{ input: { cursor: "pointer" } }}
-                        checked={paginatedRows.length > 0 && paginatedRows.every(row => checkedRowIds.has(row.id))}
-                        indeterminate={paginatedRows.some(row => checkedRowIds.has(row.id)) && !paginatedRows.every(row => checkedRowIds.has(row.id))}
+                        checked={rows.length > 0 && rows.every((row) => checkedRowIds.has(row.id))}
+                        indeterminate={rows.some((row) => checkedRowIds.has(row.id)) && !rows.every((row) => checkedRowIds.has(row.id))}
                         onChange={(event) => {
                           const checked = event.currentTarget.checked;
                           const next = new Set(checkedRowIds);
-                          paginatedRows.forEach(row => {
+                          rows.forEach((row) => {
                             if (checked) next.add(row.id);
                             else next.delete(row.id);
                           });

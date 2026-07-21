@@ -193,3 +193,16 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.15);
 }
+
+/* Move checkmark in Mantine Select dropdowns to the right */
+.mantine-Select-option {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+}
+
+.mantine-Select-optionCheck {
+  order: 2 !important;
+  margin-left: auto !important;
+  margin-right: 0 !important;
+}

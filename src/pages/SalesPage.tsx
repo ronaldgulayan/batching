@@ -138,8 +138,8 @@ const saleColumns: ExcelColumn<SaleRow>[] = [
   {
     key: "sale_or_number",
     label: "OR",
-    type: "number",
-    width: 70,
+    type: "text",
+    width: 90,
     sortable: true,
   },
   { key: "sale_date", label: "Date", type: "date", width: 100, sortable: true },

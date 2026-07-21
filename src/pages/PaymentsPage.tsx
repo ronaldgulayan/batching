@@ -12,6 +12,7 @@ import {
   TextInput,
   Text,
   SegmentedControl,
+  MultiSelect,
 } from "@mantine/core";
 import { AlertCircle, Edit3, RefreshCw, Save, Trash2, X } from "lucide-react";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
@@ -19,7 +20,9 @@ import { CustomExcelTable, type ExcelColumn } from "../components/CustomExcelTab
 import { DateShortcutInput } from "../components/DateShortcutInput";
 import { SuggestionTextInput } from "../components/SuggestionTextInput";
 
-type PaymentMethod = "CASH" | "CK";
+type PaymentMethod = "Cash" | "CK" | "Online" | "Deposit" | "CASH" | "ONLINE" | "DEPOSIT";
+
+const isCKMethod = (method: string | null | undefined) => method?.toUpperCase() === "CK";
 
 type PayableSale = {
   id: string;
@@ -30,6 +33,7 @@ type PayableSale = {
   pumpcrete: number;
   paid_amount: number;
   balance_amount: number;
+  payment_status: string;
 };
 
 type PaidSale = PayableSale & {
@@ -140,7 +144,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 const emptyForm: PaymentForm = {
   payment_date: today(),
-  payment_method: "CASH",
+  payment_method: "Cash",
   sales_person: "",
   ck_number: "",
   edit_amount: "",
@@ -151,8 +155,10 @@ const emptyForm: PaymentForm = {
 };
 
 const paymentMethods: { value: PaymentMethod; label: string }[] = [
-  { value: "CASH", label: "CASH" },
-  { value: "CK", label: "CK (Cheque)" },
+  { value: "Cash", label: "Cash" },
+  { value: "CK", label: "CK" },
+  { value: "Online", label: "Online" },
+  { value: "Deposit", label: "Deposit" },
 ];
 
 const displayMoney = (value: number) =>
@@ -205,6 +211,7 @@ export function PaymentsPage() {
     paidAmount: number;
   } | null>(null);
   const [unpaidSearch, setUnpaidSearch] = useState("");
+  const [selectedUnpaidDates, setSelectedUnpaidDates] = useState<string[]>([]);
   const [paidSearch, setPaidSearch] = useState("");
 
   // Graba State
@@ -234,36 +241,6 @@ export function PaymentsPage() {
   } | null>(null);
   const [unpaidSupplierSearch, setUnpaidSupplierSearch] = useState("");
   const [paidSupplierSearch, setPaidSupplierSearch] = useState("");
-
-  // Sales derivations
-  const selectedDrafts = useMemo(
-    () => payableSales.filter((sale) => selectedUnpaidRowIds.has(sale.id)),
-    [payableSales, selectedUnpaidRowIds]
-  );
-
-  const selectedConcreteTotal = useMemo(
-    () => selectedDrafts.reduce((sum, sale) => sum + sale.balance_amount, 0),
-    [selectedDrafts]
-  );
-
-  const selectedPumpcreteTotal = useMemo(() => {
-    const distinctPumpValues = new Set(
-      selectedDrafts
-        .map((sale) => Number(sale.pumpcrete || 0))
-        .filter((val) => val > 0)
-    );
-
-    let sum = 0;
-    for (const val of distinctPumpValues) {
-      sum += val;
-    }
-    return sum;
-  }, [selectedDrafts]);
-
-  const selectedBalanceTotal = useMemo(
-    () => selectedConcreteTotal + selectedPumpcreteTotal,
-    [selectedConcreteTotal, selectedPumpcreteTotal]
-  );
 
   // Graba derivations
   const selectedGrabaDrafts = useMemo(
@@ -376,10 +353,63 @@ export function PaymentsPage() {
       .includes(cleaned);
   }
 
+  const availableUnpaidDates = useMemo(() => {
+    const datesSet = new Set<string>();
+    payableSales.forEach((s) => {
+      if (s.sale_date) datesSet.add(s.sale_date);
+    });
+    return Array.from(datesSet).sort((a, b) => b.localeCompare(a));
+  }, [payableSales]);
+
   const filteredPayableSales = useMemo(
-    () => payableSales.filter((sale) => saleMatchesSearch(sale, unpaidSearch)),
-    [payableSales, unpaidSearch]
+    () =>
+      payableSales.filter((sale) => {
+        const matchesSearch = saleMatchesSearch(sale, unpaidSearch);
+        const matchesDate =
+          selectedUnpaidDates.length === 0 || selectedUnpaidDates.includes(sale.sale_date);
+        return matchesSearch && matchesDate;
+      }),
+    [payableSales, unpaidSearch, selectedUnpaidDates]
   );
+
+  useEffect(() => {
+    setSelectedUnpaidRowIds(new Set());
+  }, [selectedUnpaidDates, unpaidSearch]);
+
+  // Sales derivations
+  const selectedDrafts = useMemo(
+    () => filteredPayableSales.filter((sale) => selectedUnpaidRowIds.has(sale.id)),
+    [filteredPayableSales, selectedUnpaidRowIds]
+  );
+
+  const selectedConcreteTotal = useMemo(
+    () => selectedDrafts.reduce((sum, sale) => sum + Math.max(0, sale.total_amount - sale.paid_amount), 0),
+    [selectedDrafts]
+  );
+
+  const selectedPumpcreteTotal = useMemo(() => {
+    const distinctPumpcrete = new Set<number>();
+    selectedDrafts.forEach((sale) => {
+      if (sale.pumpcrete && sale.pumpcrete > 0) {
+        distinctPumpcrete.add(sale.pumpcrete);
+      }
+    });
+    return Array.from(distinctPumpcrete).reduce((sum, val) => sum + val, 0);
+  }, [selectedDrafts]);
+
+  const selectedBalanceTotal = useMemo(
+    () => selectedConcreteTotal + selectedPumpcreteTotal,
+    [selectedConcreteTotal, selectedPumpcreteTotal]
+  );
+
+  useEffect(() => {
+    if (activeTab === "sales" && !editingPayment) {
+      setForm((current) => ({
+        ...current,
+        total_amount_paid: selectedBalanceTotal > 0 ? selectedBalanceTotal : "",
+      }));
+    }
+  }, [selectedBalanceTotal, activeTab, editingPayment]);
 
   const filteredPaidSales = useMemo(
     () => paidSales.filter((sale) => saleMatchesSearch(sale, paidSearch)),
@@ -408,7 +438,7 @@ export function PaymentsPage() {
 
   const unpaidColumns = useMemo<ExcelColumn<PayableSale>[]>(
     () => [
-      { key: "sale_or_number", label: "OR", type: "number", width: 90 },
+      { key: "sale_or_number", label: "OR", type: "text", width: 90 },
       { key: "sale_date", label: "Date", type: "date", width: 120 },
       { key: "customer_name", label: "Client Name", width: 220 },
       { key: "total_amount", label: "Total Amount", type: "number", width: 150 },
@@ -420,7 +450,7 @@ export function PaymentsPage() {
 
   const paidColumns = useMemo<ExcelColumn<PaidSale>[]>(
     () => [
-      { key: "sale_or_number", label: "OR", type: "number", width: 90 },
+      { key: "sale_or_number", label: "OR", type: "text", width: 90 },
       { key: "sale_date", label: "Date", type: "date", width: 120 },
       { key: "customer_name", label: "Client Name", width: 220 },
       { key: "total_amount", label: "Total Amount", type: "number", width: 150 },
@@ -559,11 +589,14 @@ export function PaymentsPage() {
           ? record.concrete_designs[0]?.pumpcreate
           : record.concrete_designs?.pumpcreate;
         const pumpcreateVal = Number(record.pumpcreate ?? designPumpcreate ?? 0);
-
         const baseTotal = Number(record.total_amount || 0);
+        const fullTotal = baseTotal + pumpcreateVal;
 
         const paidAmount = salesPaidMap.get(record.id) ?? 0;
-        const balanceAmount = baseTotal - paidAmount;
+        const dbStatus = record.payment_status as string | undefined;
+        const isFullyPaid = dbStatus === "paid" || (baseTotal > 0 && paidAmount >= baseTotal);
+        const paymentStatus = isFullyPaid ? "paid" : dbStatus ?? (paidAmount > 0 ? "deposit" : "unpaid");
+        const balanceAmount = isFullyPaid ? 0 : Math.max(0, fullTotal - paidAmount);
 
         return {
           id: record.id,
@@ -574,11 +607,12 @@ export function PaymentsPage() {
           pumpcrete: pumpcreateVal,
           paid_amount: paidAmount,
           balance_amount: balanceAmount,
+          payment_status: paymentStatus,
         };
       });
 
-      const openSales = sales.filter((sale) => sale.balance_amount > 0 || sale.pumpcrete > 0);
-      const closedSales = sales.filter((sale) => sale.balance_amount <= 0 && sale.pumpcrete <= 0);
+      const openSales = sales.filter((sale) => sale.payment_status !== "paid" && sale.balance_amount > 0);
+      const closedSales = sales.filter((sale) => sale.payment_status === "paid" || sale.balance_amount <= 0);
 
       setPayableSales(openSales);
       setPaidSales(
@@ -592,7 +626,7 @@ export function PaymentsPage() {
             payment_date: payment?.payment_date ?? "",
             payment_amount: Number(payment?.amount || 0),
             payment_method: method,
-            ck_number: method === "CK" ? (payment?.reference_number ?? "") : "",
+            ck_number: isCKMethod(method) ? (payment?.reference_number ?? "") : "",
             sales_person: remarkValue(payment?.remarks ?? null, "Sales"),
             term: remarkValue(payment?.remarks ?? null, "Term"),
           };
@@ -633,8 +667,8 @@ export function PaymentsPage() {
             payment_date: payment?.payment_date ?? "",
             payment_amount: Number(payment?.amount || 0),
             payment_method: method,
-            ck_number: method === "CK" ? (payment?.reference_number ?? "") : "",
-            remarks: method.toUpperCase() === "CASH" ? "Counter" : method.toUpperCase() === "CK" ? "Paid" : "",
+            ck_number: isCKMethod(method) ? (payment?.reference_number ?? "") : "",
+            remarks: method.toUpperCase() === "CASH" ? "Counter" : isCKMethod(method) ? "Paid" : "",
           };
         })
       );
@@ -781,8 +815,8 @@ export function PaymentsPage() {
       if (deleteError) throw new Error(deleteError.message);
 
       const nextPaidAmount = row.paid_amount - row.payment_amount;
-      const grossTotal = row.total_amount + row.pumpcrete;
-      const status = nextPaidAmount >= grossTotal ? "paid" : nextPaidAmount > 0 ? "deposit" : "unpaid";
+      const targetAmount = row.total_amount + row.pumpcrete;
+      const status = nextPaidAmount >= targetAmount ? "paid" : nextPaidAmount > 0 ? "deposit" : "unpaid";
       const { error: statusError } = await supabase
         .from("sales_records")
         .update({ payment_status: status })
@@ -901,7 +935,7 @@ export function PaymentsPage() {
       setSalesFieldError("Sales Person is required.");
       hasFieldError = true;
     }
-    if (form.payment_method === "CK" && !form.ck_number.trim()) {
+    if (isCKMethod(form.payment_method) && !form.ck_number.trim()) {
       setCkNumberError("CK No is required.");
       hasFieldError = true;
     }
@@ -934,7 +968,7 @@ export function PaymentsPage() {
             payment_date: form.payment_date,
             amount,
             payment_method: form.payment_method,
-            reference_number: form.payment_method === "CK" ? form.ck_number.trim() : null,
+            reference_number: isCKMethod(form.payment_method) ? form.ck_number.trim() : null,
             remarks: remarksVal,
           })
           .eq("id", editingPayment.paymentId);
@@ -956,19 +990,40 @@ export function PaymentsPage() {
       }
 
       // Batch save
-      let remainingPaid = Number(form.total_amount_paid || 0);
-      const paymentPayload = [];
-      const saleUpdates = [];
+      const userPaidInput = Number(form.total_amount_paid || 0);
+      let remainingPaid = userPaidInput;
+      const isFullBatchPayment = selectedBalanceTotal > 0 && userPaidInput >= selectedBalanceTotal - 0.01;
+
+      const paymentPayload: {
+        sales_record_id: string;
+        payment_date: string;
+        amount: number;
+        payment_method: string;
+        reference_number: string | null;
+        remarks: string;
+      }[] = [];
+      const saleUpdates: { id: string; status: "paid" | "deposit" | "unpaid" }[] = [];
+
+      const seenPumpcrete = new Set<number>();
 
       for (let i = 0; i < selectedDrafts.length; i++) {
         const sale = selectedDrafts[i];
         let paymentForThisSale = 0;
-        const saleFullTarget = sale.balance_amount + sale.pumpcrete;
+
+        const hasPumpcrete = sale.pumpcrete && sale.pumpcrete > 0;
+        const isPumpcreteSeen = hasPumpcrete && seenPumpcrete.has(sale.pumpcrete);
+        if (hasPumpcrete) seenPumpcrete.add(sale.pumpcrete);
+
+        const saleTargetTotal = isPumpcreteSeen
+          ? sale.total_amount
+          : sale.total_amount + sale.pumpcrete;
+
+        const saleTargetBalance = Math.max(0, saleTargetTotal - sale.paid_amount);
 
         if (i === selectedDrafts.length - 1) {
           paymentForThisSale = remainingPaid;
         } else {
-          paymentForThisSale = Math.min(remainingPaid, saleFullTarget);
+          paymentForThisSale = Math.min(remainingPaid, saleTargetBalance);
           if (paymentForThisSale < 0) paymentForThisSale = 0;
         }
         remainingPaid -= paymentForThisSale;
@@ -979,22 +1034,35 @@ export function PaymentsPage() {
             payment_date: form.payment_date,
             amount: paymentForThisSale,
             payment_method: form.payment_method,
-            reference_number: form.payment_method === "CK" ? form.ck_number.trim() : null,
+            reference_number: isCKMethod(form.payment_method) ? form.ck_number.trim() : null,
             remarks: remarksVal,
           });
-
-          const nextPaidAmount = sale.paid_amount + paymentForThisSale;
-          const status = nextPaidAmount >= (sale.total_amount + sale.pumpcrete) ? "paid" : "deposit";
-          saleUpdates.push({ id: sale.id, status });
         }
+
+        const nextPaidAmount = sale.paid_amount + paymentForThisSale;
+        const status = isFullBatchPayment || nextPaidAmount >= sale.total_amount
+          ? "paid"
+          : nextPaidAmount > 0
+          ? "deposit"
+          : "unpaid";
+        saleUpdates.push({ id: sale.id, status });
       }
 
-      if (paymentPayload.length > 0) {
-        const { error: insertError } = await supabase.from("sales_payments").insert(paymentPayload);
-        if (insertError) throw new Error(insertError.message);
+      if (paymentPayload.length > 0 || saleUpdates.length > 0) {
+        if (paymentPayload.length > 0) {
+          const { error: insertError } = await supabase.from("sales_payments").insert(paymentPayload);
+          if (insertError) throw new Error(insertError.message);
+        }
 
-        for (const update of saleUpdates) {
-          await supabase.from("sales_records").update({ payment_status: update.status }).eq("id", update.id);
+        if (saleUpdates.length > 0) {
+          const updateResults = await Promise.all(
+            saleUpdates.map((update) =>
+              supabase.from("sales_records").update({ payment_status: update.status }).eq("id", update.id)
+            )
+          );
+          for (const res of updateResults) {
+            if (res.error) throw new Error(res.error.message);
+          }
         }
 
         setMessage("Payments saved successfully.");
@@ -1025,7 +1093,7 @@ export function PaymentsPage() {
       setPaymentDateError("Payment Date is required.");
       hasFieldError = true;
     }
-    if (form.payment_method === "CK" && !form.ck_number.trim()) {
+    if (isCKMethod(form.payment_method) && !form.ck_number.trim()) {
       setCkNumberError("CK No is required.");
       hasFieldError = true;
     }
@@ -1056,7 +1124,7 @@ export function PaymentsPage() {
             payment_date: form.payment_date,
             amount,
             payment_method: form.payment_method,
-            reference_number: form.payment_method === "CK" ? form.ck_number.trim() : null,
+            reference_number: isCKMethod(form.payment_method) ? form.ck_number.trim() : null,
             remarks: null,
           })
           .eq("id", editingGrabaPayment.paymentId);
@@ -1100,7 +1168,7 @@ export function PaymentsPage() {
             payment_date: form.payment_date,
             amount: paymentForThisGraba,
             payment_method: form.payment_method,
-            reference_number: form.payment_method === "CK" ? form.ck_number.trim() : null,
+            reference_number: isCKMethod(form.payment_method) ? form.ck_number.trim() : null,
             remarks: null,
           });
 
@@ -1370,12 +1438,13 @@ export function PaymentsPage() {
               {activeTab !== "supplier" && (
                 <Select
                   label="Method"
+                  checkIconPosition="right"
                   data={paymentMethods}
                   value={form.payment_method}
                   onChange={(val) =>
                     setForm((current) => ({
                       ...current,
-                      payment_method: (val as PaymentMethod) || "CASH",
+                      payment_method: (val as PaymentMethod) || "Cash",
                     }))
                   }
                 />
@@ -1424,6 +1493,7 @@ export function PaymentsPage() {
                   />
                   <Select
                     label="Remarks"
+                    checkIconPosition="right"
                     data={["Paid", "Collect"]}
                     value={form.remarks}
                     onChange={(val) =>
@@ -1433,7 +1503,7 @@ export function PaymentsPage() {
                 </>
               )}
 
-              {activeTab !== "supplier" && form.payment_method === "CK" && (
+              {activeTab !== "supplier" && isCKMethod(form.payment_method) && (
                 <TextInput
                   label="CK No"
                   value={form.ck_number}
@@ -1470,26 +1540,11 @@ export function PaymentsPage() {
                   />
                   {activeTab === "sales" && selectedDrafts.length > 0 && (
                     <Text size="xs" c="dimmed">
-                      Concrete: {formatMoney(selectedConcreteTotal)}
+                      Total Amount: {formatMoney(selectedConcreteTotal)}
                       {selectedPumpcreteTotal > 0 && ` + Pumpcrete: ${formatMoney(selectedPumpcreteTotal)}`}
                       {" = Total: "}{formatMoney(selectedBalanceTotal)}
                     </Text>
                   )}
-                  {currentBalanceTotal > 0 &&
-                    form.total_amount_paid !== "" &&
-                    Number(form.total_amount_paid) !== currentBalanceTotal && (
-                      <Group gap="xs" style={{ marginTop: 2 }}>
-                        {Number(form.total_amount_paid) - currentBalanceTotal < 0 ? (
-                          <Badge color="red" variant="filled">
-                            Short by {formatMoney(Math.abs(Number(form.total_amount_paid) - currentBalanceTotal))}
-                          </Badge>
-                        ) : (
-                          <Badge color="green" variant="filled">
-                            Overpaid by {formatMoney(Number(form.total_amount_paid) - currentBalanceTotal)}
-                          </Badge>
-                        )}
-                      </Group>
-                    )}
                 </Stack>
               )}
             </SimpleGrid>
@@ -1560,14 +1615,26 @@ export function PaymentsPage() {
       {activeTab === "sales" && (
         <Stack gap="xl">
           <Stack gap="xs">
-            <Group justify="space-between">
+            <Group justify="space-between" align="center" wrap="wrap" gap="xs">
               <Text size="lg" fw={600}>Unpaid OR Transactions</Text>
-              <TextInput
-                placeholder="Search Client..."
-                value={unpaidSearch}
-                onChange={(e) => setUnpaidSearch(e.currentTarget.value)}
-                style={{ width: 220 }}
-              />
+              <Group gap="xs">
+                <MultiSelect
+                  placeholder="Filter by Date(s)..."
+                  data={availableUnpaidDates}
+                  value={selectedUnpaidDates}
+                  onChange={setSelectedUnpaidDates}
+                  clearable
+                  searchable
+                  checkIconPosition="right"
+                  style={{ minWidth: 220 }}
+                />
+                <TextInput
+                  placeholder="Search Client..."
+                  value={unpaidSearch}
+                  onChange={(e) => setUnpaidSearch(e.currentTarget.value)}
+                  style={{ width: 200 }}
+                />
+              </Group>
             </Group>
             <CustomExcelTable
               columns={unpaidColumns}
