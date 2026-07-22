@@ -230,7 +230,9 @@ export function CustomersPage() {
       const clientName = sale.customer_name?.trim() || "Unspecified Client";
       const paymentsForSale = paymentsMap.get(sale.id) || [];
       const paidAmount = paymentsForSale.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-      const balanceAmount = sale.total_amount - paidAmount;
+      const isFullyPaid = sale.payment_status === "paid" || (sale.total_amount > 0 && paidAmount >= sale.total_amount);
+      const balanceAmount = isFullyPaid ? 0 : Math.max(0, sale.total_amount - paidAmount);
+      const paymentStatus = isFullyPaid ? "paid" : sale.payment_status;
 
       const saleWithPayments: SaleWithPayments = {
         id: sale.id,
@@ -241,7 +243,7 @@ export function CustomersPage() {
         total_amount: sale.total_amount,
         paid_amount: paidAmount,
         balance_amount: balanceAmount,
-        payment_status: sale.payment_status,
+        payment_status: paymentStatus,
         payments: paymentsForSale,
       };
 
@@ -251,7 +253,7 @@ export function CustomersPage() {
         group.totalSalesAmount += saleWithPayments.total_amount;
         group.totalPaidAmount += saleWithPayments.paid_amount;
         group.totalBalanceAmount += saleWithPayments.balance_amount;
-        if (saleWithPayments.balance_amount > 0) group.hasUnpaid = true;
+        if (saleWithPayments.balance_amount > 0 && saleWithPayments.payment_status !== "paid") group.hasUnpaid = true;
         if (saleWithPayments.sale_date > group.latestDate) group.latestDate = saleWithPayments.sale_date;
       } else {
         clientMap.set(clientName, {
@@ -261,7 +263,7 @@ export function CustomersPage() {
           totalPaidAmount: saleWithPayments.paid_amount,
           totalBalanceAmount: saleWithPayments.balance_amount,
           latestDate: saleWithPayments.sale_date,
-          hasUnpaid: saleWithPayments.balance_amount > 0,
+          hasUnpaid: saleWithPayments.balance_amount > 0 && saleWithPayments.payment_status !== "paid",
         });
       }
     }

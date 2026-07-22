@@ -205,8 +205,8 @@ export function SalesPage() {
   const hasBatchDrafts = batchDrafts.length > 0;
 
   const total = useMemo(
-    () => Number(form.cubic_volume || 0) * Number(form.unit_price || 0),
-    [form.cubic_volume, form.unit_price],
+    () => Number(form.cubic_volume || 0) * Number(form.unit_price || 0) + Number(form.pumpcreate || 0),
+    [form.cubic_volume, form.unit_price, form.pumpcreate],
   );
   const displayedNextOrNumber = useMemo(() => {
     const formOrNumber = Number(form.sale_or_number || 0);
@@ -354,6 +354,8 @@ export function SalesPage() {
           const designPumpcreate = Array.isArray(record.concrete_designs)
             ? record.concrete_designs[0]?.pumpcreate
             : record.concrete_designs?.pumpcreate;
+          const pumpVal = Number(record.pumpcreate ?? designPumpcreate ?? 0);
+          const baseTotal = Number(record.total_amount || 0);
 
           return {
             id: record.id,
@@ -366,7 +368,7 @@ export function SalesPage() {
             cubic_volume: Number(record.cubic_volume || 0),
             unit_price: Number(record.unit_price || 0),
             pumpcreate: record.pumpcreate ?? designPumpcreate ?? null,
-            total_amount: Number(record.total_amount || 0),
+            total_amount: baseTotal + pumpVal,
             payment_status: record.payment_status,
             counter_date: remarkValue(record.remarks, "Counter Date"),
             counter: remarkValue(record.remarks, "Counter"),
@@ -1125,7 +1127,8 @@ export function SalesPage() {
                       {batchDrafts.map((draft, index) => {
                         const draftTotal =
                           Number(draft.cubic_volume || 0) *
-                          Number(draft.unit_price || 0);
+                            Number(draft.unit_price || 0) +
+                          Number(draft.pumpcreate || 0);
                         const minimumDraftOrNumber =
                           index === 0
                             ? nextOrNumber

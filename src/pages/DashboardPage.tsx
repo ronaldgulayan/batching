@@ -290,7 +290,9 @@ export function DashboardPage() {
       const baseTotal = Number(record.total_amount || 0);
       const totalAmount = baseTotal + pumpVal;
       const paidAmount = allPaymentsMap.get(record.id) ?? 0;
-      const balanceAmount = totalAmount - paidAmount;
+      const isFullyPaid = record.payment_status === "paid" || (totalAmount > 0 && paidAmount >= totalAmount);
+      const balanceAmount = isFullyPaid ? 0 : Math.max(0, totalAmount - paidAmount);
+      const paymentStatus = isFullyPaid ? "paid" : record.payment_status;
 
       return {
         id: record.id,
@@ -301,7 +303,7 @@ export function DashboardPage() {
         total_amount: totalAmount,
         paid_amount: paidAmount,
         balance_amount: balanceAmount,
-        payment_status: record.payment_status,
+        payment_status: paymentStatus,
       };
     });
 

@@ -382,24 +382,9 @@ export function PaymentsPage() {
     [filteredPayableSales, selectedUnpaidRowIds]
   );
 
-  const selectedConcreteTotal = useMemo(
-    () => selectedDrafts.reduce((sum, sale) => sum + Math.max(0, sale.total_amount - sale.paid_amount), 0),
-    [selectedDrafts]
-  );
-
-  const selectedPumpcreteTotal = useMemo(() => {
-    const distinctPumpcrete = new Set<number>();
-    selectedDrafts.forEach((sale) => {
-      if (sale.pumpcrete && sale.pumpcrete > 0) {
-        distinctPumpcrete.add(sale.pumpcrete);
-      }
-    });
-    return Array.from(distinctPumpcrete).reduce((sum, val) => sum + val, 0);
-  }, [selectedDrafts]);
-
   const selectedBalanceTotal = useMemo(
-    () => selectedConcreteTotal + selectedPumpcreteTotal,
-    [selectedConcreteTotal, selectedPumpcreteTotal]
+    () => selectedDrafts.reduce((sum, sale) => sum + sale.balance_amount, 0),
+    [selectedDrafts]
   );
 
   useEffect(() => {
@@ -594,7 +579,7 @@ export function PaymentsPage() {
 
         const paidAmount = salesPaidMap.get(record.id) ?? 0;
         const dbStatus = record.payment_status as string | undefined;
-        const isFullyPaid = dbStatus === "paid" || (baseTotal > 0 && paidAmount >= baseTotal);
+        const isFullyPaid = dbStatus === "paid" || (fullTotal > 0 && paidAmount >= fullTotal);
         const paymentStatus = isFullyPaid ? "paid" : dbStatus ?? (paidAmount > 0 ? "deposit" : "unpaid");
         const balanceAmount = isFullyPaid ? 0 : Math.max(0, fullTotal - paidAmount);
 
@@ -603,7 +588,7 @@ export function PaymentsPage() {
           sale_or_number: Number(record.sale_or_number || 0),
           sale_date: record.sale_date,
           customer_name: customerName,
-          total_amount: baseTotal,
+          total_amount: fullTotal,
           pumpcrete: pumpcreateVal,
           paid_amount: paidAmount,
           balance_amount: balanceAmount,
@@ -733,7 +718,7 @@ export function PaymentsPage() {
       paymentId: row.payment_id,
       saleId: row.id,
       oldAmount: row.payment_amount,
-      totalAmount: row.total_amount + row.pumpcrete,
+      totalAmount: row.total_amount,
       paidAmount: row.paid_amount,
     });
     setForm({
@@ -1010,15 +995,7 @@ export function PaymentsPage() {
         const sale = selectedDrafts[i];
         let paymentForThisSale = 0;
 
-        const hasPumpcrete = sale.pumpcrete && sale.pumpcrete > 0;
-        const isPumpcreteSeen = hasPumpcrete && seenPumpcrete.has(sale.pumpcrete);
-        if (hasPumpcrete) seenPumpcrete.add(sale.pumpcrete);
-
-        const saleTargetTotal = isPumpcreteSeen
-          ? sale.total_amount
-          : sale.total_amount + sale.pumpcrete;
-
-        const saleTargetBalance = Math.max(0, saleTargetTotal - sale.paid_amount);
+        const saleTargetBalance = sale.balance_amount;
 
         if (i === selectedDrafts.length - 1) {
           paymentForThisSale = remainingPaid;
@@ -1540,9 +1517,7 @@ export function PaymentsPage() {
                   />
                   {activeTab === "sales" && selectedDrafts.length > 0 && (
                     <Text size="xs" c="dimmed">
-                      Total Amount: {formatMoney(selectedConcreteTotal)}
-                      {selectedPumpcreteTotal > 0 && ` + Pumpcrete: ${formatMoney(selectedPumpcreteTotal)}`}
-                      {" = Total: "}{formatMoney(selectedBalanceTotal)}
+                      Total Unpaid Balance: {formatMoney(selectedBalanceTotal)}
                     </Text>
                   )}
                 </Stack>
