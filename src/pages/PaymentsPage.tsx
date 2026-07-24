@@ -29,8 +29,12 @@ type PayableSale = {
   sale_or_number: number;
   sale_date: string;
   customer_name: string;
-  total_amount: number;
+  project_site?: string;
+  concrete_code?: string;
+  cubic_volume: number;
+  unit_price: number;
   pumpcrete: number;
+  total_amount: number;
   paid_amount: number;
   balance_amount: number;
   payment_status: string;
@@ -274,6 +278,11 @@ export function PaymentsPage() {
       sale.sale_or_number,
       sale.sale_date,
       sale.customer_name,
+      sale.project_site ?? "",
+      sale.concrete_code ?? "",
+      sale.cubic_volume,
+      sale.unit_price,
+      sale.pumpcrete,
       sale.total_amount,
       sale.paid_amount,
       sale.balance_amount,
@@ -424,11 +433,14 @@ export function PaymentsPage() {
   const unpaidColumns = useMemo<ExcelColumn<PayableSale>[]>(
     () => [
       { key: "sale_or_number", label: "OR", type: "text", width: 90 },
-      { key: "sale_date", label: "Date", type: "date", width: 120 },
-      { key: "customer_name", label: "Client Name", width: 220 },
-      { key: "total_amount", label: "Total Amount", type: "number", width: 150 },
-      { key: "paid_amount", label: "Paid", type: "number", width: 140 },
-      { key: "balance_amount", label: "Balance", type: "number", width: 150 },
+      { key: "sale_date", label: "Date", type: "date", width: 110 },
+      { key: "customer_name", label: "Client Name", width: 200 },
+      { key: "project_site", label: "Site", width: 150 },
+      { key: "concrete_code", label: "Design", width: 110 },
+      { key: "cubic_volume", label: "Cubics", type: "number", width: 95 },
+      { key: "unit_price", label: "Price", type: "number", width: 110 },
+      { key: "pumpcrete", label: "Pumpcrete", type: "number", width: 110 },
+      { key: "total_amount", label: "Total Amount", type: "number", width: 140 },
     ],
     []
   );
@@ -436,15 +448,16 @@ export function PaymentsPage() {
   const paidColumns = useMemo<ExcelColumn<PaidSale>[]>(
     () => [
       { key: "sale_or_number", label: "OR", type: "text", width: 90 },
-      { key: "sale_date", label: "Date", type: "date", width: 120 },
-      { key: "customer_name", label: "Client Name", width: 220 },
-      { key: "total_amount", label: "Total Amount", type: "number", width: 150 },
-      { key: "payment_amount", label: "Payment Amt", type: "number", width: 140 },
-      { key: "payment_method", label: "Method", width: 120 },
-      { key: "ck_number", label: "CK No.", width: 120 },
-      { key: "sales_person", label: "Sales Person", width: 180 },
-      { key: "term", label: "Term/Details", width: 220 },
-      { key: "payment_date", label: "Payment Date", type: "date", width: 130 },
+      { key: "sale_date", label: "Date", type: "date", width: 110 },
+      { key: "customer_name", label: "Client Name", width: 180 },
+      { key: "project_site", label: "Site", width: 150 },
+      { key: "total_amount", label: "Total Amount", type: "number", width: 140 },
+      { key: "payment_amount", label: "Payment Amt", type: "number", width: 130 },
+      { key: "payment_method", label: "Method", width: 110 },
+      { key: "ck_number", label: "CK No.", width: 110 },
+      { key: "sales_person", label: "Sales Person", width: 160 },
+      { key: "term", label: "Term/Details", width: 180 },
+      { key: "payment_date", label: "Payment Date", type: "date", width: 120 },
     ],
     []
   );
@@ -528,7 +541,7 @@ export function PaymentsPage() {
       ] = await Promise.all([
         supabase
           .from("sales_records")
-          .select("id,sale_or_number,sale_date,cubic_volume,unit_price,total_amount,pumpcreate,manual_customer_name,customers(name),concrete_designs(pumpcreate)")
+          .select("id,sale_or_number,sale_date,cubic_volume,unit_price,total_amount,pumpcreate,manual_customer_name,project_site,customers(name),concrete_designs(code,pumpcreate)")
           .order("sale_or_number", { ascending: false }),
         supabase
           .from("sales_payments")
@@ -583,13 +596,21 @@ export function PaymentsPage() {
         const paymentStatus = isFullyPaid ? "paid" : dbStatus ?? (paidAmount > 0 ? "deposit" : "unpaid");
         const balanceAmount = isFullyPaid ? 0 : Math.max(0, fullTotal - paidAmount);
 
+        const designCode = Array.isArray(record.concrete_designs)
+          ? record.concrete_designs[0]?.code
+          : record.concrete_designs?.code;
+
         return {
           id: record.id,
           sale_or_number: Number(record.sale_or_number || 0),
           sale_date: record.sale_date,
           customer_name: customerName,
-          total_amount: fullTotal,
+          project_site: record.project_site || "",
+          concrete_code: designCode || "",
+          cubic_volume: Number(record.cubic_volume || 0),
+          unit_price: Number(record.unit_price || 0),
           pumpcrete: pumpcreateVal,
+          total_amount: fullTotal,
           paid_amount: paidAmount,
           balance_amount: balanceAmount,
           payment_status: paymentStatus,

@@ -5,6 +5,7 @@ import {
   Badge,
   Button,
   Group,
+  FileInput,
   Modal,
   NumberInput,
   Paper,
@@ -12,17 +13,21 @@ import {
   SimpleGrid,
   Stack,
   Table,
+  Text,
   TextInput,
 } from "@mantine/core";
 import {
   AlertCircle,
   CopyPlus,
   Edit3,
+  FileSpreadsheet,
   RefreshCw,
   Save,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
+import * as XLSX from "xlsx";
 import {
   CustomExcelTable,
   type ExcelColumn,
@@ -123,6 +128,45 @@ const buildRemarks = (counterDate: string, counter: string) => {
   return parts.join(" | ");
 };
 
+const REQUIRED_EXCEL_COLUMNS = [
+  { key: "date", name: "Date", aliases: ["DATE", "SALE DATE", "SALEDATE"] },
+  { key: "or_no", name: "OR NO", aliases: ["OR NO", "OR NO.", "OR_NO", "ORNO", "OR NUMBER", "OR"] },
+  { key: "client_name", name: "CLIENT NAME", aliases: ["CLIENT NAME", "CLIENT_NAME", "CLIENTNAME", "CLIENT", "CUSTOMER NAME", "CUSTOMER"] },
+  { key: "design", name: "DESIGN", aliases: ["DESIGN", "MIX CODE", "CONCRETE DESIGN", "DESIGN CODE"] },
+  { key: "site", name: "SITE", aliases: ["SITE", "PROJECT SITE", "LOCATION"] },
+  { key: "cubic", name: "CUBIC", aliases: ["CUBIC", "CUBICS", "CUBIC VOLUME", "VOLUME"] },
+  { key: "price", name: "PRICE", aliases: ["PRICE", "UNIT PRICE", "UNITPRICE"] },
+  { key: "payment_date", name: "PAYMENT DATE", aliases: ["PAYMENT DATE", "PAYMENT_DATE", "PAYMENTDATE", "PAYMENT"] },
+  { key: "type", name: "TYPE", aliases: ["TYPE", "PAYMENT TYPE", "PAYMENT METHOD", "METHOD"] },
+  { key: "counter", name: "COUNTER", aliases: ["COUNTER", "COUNTER DATE", "COUNTERDATE"] },
+  { key: "sales", name: "SALES", aliases: ["SALES", "SALES PERSON", "SALESPERSON", "AGENT"] },
+  { key: "pumpcrete", name: "PUMPCRETE", aliases: ["PUMPCRETE", "PUMPCRETE FEE", "PUMP"] },
+];
+
+function parseExcelDate(val: any): string {
+  if (!val) return today();
+  if (typeof val === "number") {
+    try {
+      const dateObj = XLSX.SSF.parse_date_code(val);
+      if (dateObj) {
+        const y = dateObj.y;
+        const m = String(dateObj.m).padStart(2, "0");
+        const d = String(dateObj.d).padStart(2, "0");
+        return `${y}-${m}-${d}`;
+      }
+    } catch {
+      // fallback
+    }
+  }
+  const str = String(val).trim();
+  if (!str) return today();
+  const d = new Date(str);
+  if (!isNaN(d.getTime())) {
+    return d.toISOString().slice(0, 10);
+  }
+  return str;
+}
+
 const relatedName = (value: SalesRecord["customers"]) =>
   Array.isArray(value) ? value[0]?.name : value?.name;
 
@@ -202,7 +246,165 @@ export function SalesPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [salesSearch, setSalesSearch] = useState("");
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importSuccess, setImportSuccess] = useState("");
+  const [importError, setImportError] = useState("");
   const hasBatchDrafts = batchDrafts.length > 0;
+
+  async function handleImportExcel() {
+    if (!selectedFile) return;
+    if (!isSupabaseConfigured) {
+      setImportError("Supabase credentials are missing from .env.");
+      return;
+    }
+
+    setImporting(true);
+    setImportError("");
+    setImportSuccess("");
+
+    try {
+      const buffer = await selectedFile.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: "array" });
+      const sheetName = workbook.SheetNames[0];
+      if (!sheetName) throw new Error("Walang laman o sira ang Excel file.");
+
+      const sheet = workbook.Sheets[sheetName];
+      const jsonRows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
+      if (jsonRows.length === 0) throw new Error("No data rows found in the Excel file.");
+
+      // Check column headers from first row
+      const actualHeaders = Object.keys(jsonRows[0]);
+      const normalizedActualHeaders = actualHeaders.map((h) =>
+        h.trim().toUpperCase().replace(/[^A-Z0-9]/g, "")
+      );
+
+      // Validate required columns
+      const missingColumns: string[] = [];
+      REQUIRED_EXCEL_COLUMNS.forEach((col) => {
+        const isFound = col.aliases.some((alias) => {
+          const normAlias = alias.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+          return normalizedActualHeaders.includes(normAlias);
+        });
+        if (!isFound) {
+          missingColumns.push(col.name);
+        }
+      });
+
+      if (missingColumns.length > 0) {
+        throw new Error(
+          `Missing required column(s) in your Excel file: ${missingColumns.join(", ")}`
+        );
+      }
+
+      // Value extraction helper
+      const getColVal = (row: Record<string, any>, colDef: (typeof REQUIRED_EXCEL_COLUMNS)[0]) => {
+        for (const k of Object.keys(row)) {
+          const normK = k.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+          for (const alias of colDef.aliases) {
+            const normAlias = alias.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+            if (normK === normAlias) {
+              return row[k];
+            }
+          }
+        }
+        return "";
+      };
+
+      let salesInsertedCount = 0;
+      let paymentsInsertedCount = 0;
+
+      for (const row of jsonRows) {
+        const rawDate = getColVal(row, REQUIRED_EXCEL_COLUMNS[0]); // Date
+        const rawOrNo = getColVal(row, REQUIRED_EXCEL_COLUMNS[1]); // OR NO
+        const clientName = String(getColVal(row, REQUIRED_EXCEL_COLUMNS[2]) || "").trim(); // CLIENT NAME
+        const designLabel = String(getColVal(row, REQUIRED_EXCEL_COLUMNS[3]) || "").trim(); // DESIGN
+        const projectSite = String(getColVal(row, REQUIRED_EXCEL_COLUMNS[4]) || "").trim(); // SITE
+        const cubicVal = Number(getColVal(row, REQUIRED_EXCEL_COLUMNS[5]) || 0); // CUBIC
+        const priceVal = Number(getColVal(row, REQUIRED_EXCEL_COLUMNS[6]) || 0); // PRICE
+        const rawPaymentDate = getColVal(row, REQUIRED_EXCEL_COLUMNS[7]); // PAYMENT DATE
+        const paymentType = String(getColVal(row, REQUIRED_EXCEL_COLUMNS[8]) || "").trim(); // TYPE
+        const counterVal = String(getColVal(row, REQUIRED_EXCEL_COLUMNS[9]) || "").trim(); // COUNTER
+        const salesPerson = String(getColVal(row, REQUIRED_EXCEL_COLUMNS[10]) || "").trim(); // SALES
+        const pumpVal = Number(getColVal(row, REQUIRED_EXCEL_COLUMNS[11]) || 0); // PUMPCRETE
+
+        const orNum = Number(rawOrNo || 0);
+        if (!orNum || !clientName) continue;
+
+        const saleDate = parseExcelDate(rawDate);
+        const customerId = await ensureCustomerId(clientName);
+        if (!customerId) continue;
+
+        const siteName = await ensureSiteName(projectSite || "Main");
+        const designId = await ensureDesignId(designLabel || "Default");
+
+        const hasPaymentDate = Boolean(rawPaymentDate && String(rawPaymentDate).trim() !== "");
+        const paymentDate = hasPaymentDate ? parseExcelDate(rawPaymentDate) : null;
+        const fullTotal = cubicVal * priceVal + pumpVal;
+
+        const saleRecordPayload = {
+          sale_or_number: orNum,
+          sale_date: saleDate,
+          customer_id: customerId,
+          manual_customer_name: null,
+          concrete_design_id: designId,
+          project_site: siteName,
+          cubic_volume: cubicVal,
+          unit_price: priceVal,
+          pumpcreate: pumpVal > 0 ? pumpVal : null,
+          payment_status: hasPaymentDate ? "paid" : "unpaid",
+          remarks: buildRemarks("", counterVal),
+        };
+
+        const { data: upsertData, error: upsertError } = await supabase
+          .from("sales_records")
+          .upsert(saleRecordPayload, { onConflict: "sale_or_number" })
+          .select("id")
+          .single();
+
+        if (upsertError) throw new Error(`Error inserting OR ${orNum}: ${upsertError.message}`);
+        salesInsertedCount++;
+
+        // Insert payment if PAYMENT DATE has a value
+        if (hasPaymentDate && paymentDate && upsertData?.id) {
+          const paymentRemarksParts = [];
+          if (salesPerson) paymentRemarksParts.push(`Sales: ${salesPerson}`);
+          paymentRemarksParts.push("Term: Paid");
+
+          const paymentMethod = paymentType ? paymentType.toUpperCase() : "CASH";
+
+          const { error: payErr } = await supabase
+            .from("sales_payments")
+            .insert({
+              sales_record_id: upsertData.id,
+              payment_date: paymentDate,
+              amount: fullTotal,
+              payment_method: paymentMethod,
+              reference_number: null,
+              remarks: paymentRemarksParts.join(" | "),
+            });
+
+          if (payErr) {
+            console.error(`Payment insert error for OR ${orNum}:`, payErr);
+          } else {
+            paymentsInsertedCount++;
+          }
+        }
+      }
+
+      setImportSuccess(
+        `Successfully imported ${salesInsertedCount} sales record(s)${
+          paymentsInsertedCount > 0 ? ` and ${paymentsInsertedCount} payment(s)` : ""
+        }!`
+      );
+      await loadRows();
+    } catch (err: any) {
+      setImportError(err?.message || "Failed to process Excel file.");
+    } finally {
+      setImporting(false);
+    }
+  }
 
   const total = useMemo(
     () => Number(form.cubic_volume || 0) * Number(form.unit_price || 0) + Number(form.pumpcreate || 0),
@@ -1075,6 +1277,16 @@ export function SalesPage() {
                 >
                   Refresh
                 </Button>
+                <Button
+                  type="button"
+                  leftSection={<Upload size={16} />}
+                  variant="light"
+                  color="teal"
+                  onClick={() => setImportModalOpen(true)}
+                  disabled={loading || Boolean(editingSale)}
+                >
+                  Import Data
+                </Button>
               </Group>
               <Badge variant="light">Next OR No: {displayedNextOrNumber}</Badge>
             </Group>
@@ -1442,6 +1654,86 @@ export function SalesPage() {
               loading={loading}
             >
               Save Counter Date
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      <Modal
+        opened={importModalOpen}
+        onClose={() => {
+          if (!importing) {
+            setImportModalOpen(false);
+            setSelectedFile(null);
+            setImportSuccess("");
+            setImportError("");
+          }
+        }}
+        title={<Text fw={700} size="lg">Import Sales Data from Excel</Text>}
+        size="lg"
+        centered
+      >
+        <Stack gap="md">
+          <Alert color="blue" title="Required Excel Column Headers">
+            Please make sure your Excel file (.xlsx, .xls, .csv) contains the following column headers in Row 1:
+          </Alert>
+
+          <Paper withBorder p="md" radius="sm">
+            <Group gap="xs" wrap="wrap">
+              <Badge color="blue" size="lg" variant="filled">Date</Badge>
+              <Badge color="blue" size="lg" variant="filled">OR NO</Badge>
+              <Badge color="blue" size="lg" variant="filled">CLIENT NAME</Badge>
+              <Badge color="blue" size="lg" variant="filled">DESIGN</Badge>
+              <Badge color="blue" size="lg" variant="filled">SITE</Badge>
+              <Badge color="blue" size="lg" variant="filled">CUBIC</Badge>
+              <Badge color="blue" size="lg" variant="filled">PRICE</Badge>
+              <Badge color="blue" size="lg" variant="filled">PAYMENT DATE</Badge>
+              <Badge color="blue" size="lg" variant="filled">TYPE</Badge>
+              <Badge color="blue" size="lg" variant="filled">COUNTER</Badge>
+              <Badge color="blue" size="lg" variant="filled">SALES</Badge>
+              <Badge color="blue" size="lg" variant="filled">PUMPCRETE</Badge>
+            </Group>
+          </Paper>
+
+          {importError && <Alert color="red" title="Import Error">{importError}</Alert>}
+          {importSuccess && <Alert color="green" title="Import Success">{importSuccess}</Alert>}
+
+          <FileInput
+            label="Select Excel File"
+            placeholder="Select Excel File (.xlsx, .xls, .csv)..."
+            accept=".xlsx, .xls, .csv"
+            value={selectedFile}
+            onChange={(file) => {
+              setSelectedFile(file);
+              setImportSuccess("");
+              setImportError("");
+            }}
+            clearable
+            leftSection={<FileSpreadsheet size={16} />}
+          />
+
+          <Group justify="flex-end" mt="md">
+            <Button
+              variant="light"
+              color="gray"
+              onClick={() => {
+                setImportModalOpen(false);
+                setSelectedFile(null);
+                setImportSuccess("");
+                setImportError("");
+              }}
+              disabled={importing}
+            >
+              Cancel
+            </Button>
+            <Button
+              color="teal"
+              leftSection={<Upload size={16} />}
+              disabled={!selectedFile || importing}
+              loading={importing}
+              onClick={handleImportExcel}
+            >
+              Start Import
             </Button>
           </Group>
         </Stack>
