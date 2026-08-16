@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Alert, Badge, Button, Group, NumberInput, Paper, SimpleGrid, Stack, TextInput } from '@mantine/core';
+import { Alert, Badge, Button, Group, LoadingOverlay, NumberInput, Paper, SimpleGrid, Stack, TextInput } from '@mantine/core';
 import { AlertCircle, Edit3, RefreshCw, Save, Trash2, X } from 'lucide-react';
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient';
 import { CustomExcelTable, type ExcelColumn } from './CustomExcelTable';
@@ -153,6 +153,14 @@ export function MaintenanceLookupPage({ table, orderBy, fields, columns, uniqueK
 
   return (
     <Stack gap="md">
+      <LoadingOverlay
+        visible={loading}
+        zIndex={1000}
+        transitionProps={{ duration: 0 }}
+        overlayProps={{ opacity: 0.35, blur: 0.5 }}
+        loaderProps={{ color: "blue", type: "bars", size: "lg" }}
+        style={{ position: "fixed", inset: 0 }}
+      />
       <Paper withBorder radius="sm" p="md" className="masterPanel">
         <form
           onSubmit={(event) => {

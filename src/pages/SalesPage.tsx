@@ -6,10 +6,15 @@ import {
   Button,
   Group,
   FileInput,
+  Loader,
+  LoadingOverlay,
   Modal,
   NumberInput,
   Paper,
+  Progress,
   ScrollArea,
+  Select,
+  SegmentedControl,
   SimpleGrid,
   Stack,
   Table,
@@ -246,12 +251,56 @@ export function SalesPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [salesSearch, setSalesSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "unpaid" | "paid" | "deposit">("all");
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [availableSheets, setAvailableSheets] = useState<string[]>([]);
+  const [selectedSheet, setSelectedSheet] = useState<string>("");
   const [importing, setImporting] = useState(false);
+  const [readingSheets, setReadingSheets] = useState(false);
+  const [importProgress, setImportProgress] = useState<{ current: number; total: number } | null>(null);
+  const [importStats, setImportStats] = useState<{
+    totalInFile: number;
+    imported: number;
+    skipped: number;
+    processed: number;
+    remaining: number;
+  } | null>(null);
+  const importCancelledRef = useRef(false);
   const [importSuccess, setImportSuccess] = useState("");
   const [importError, setImportError] = useState("");
   const hasBatchDrafts = batchDrafts.length > 0;
+
+  const handleCancelImport = () => {
+    importCancelledRef.current = true;
+  };
+
+  const handleFileSelectionChange = async (file: File | null) => {
+    setSelectedFile(file);
+    setImportSuccess("");
+    setImportError("");
+    setImportProgress(null);
+    setAvailableSheets([]);
+    setSelectedSheet("");
+
+    if (file) {
+      setReadingSheets(true);
+      try {
+        await new Promise((r) => setTimeout(r, 50));
+        const buffer = await file.arrayBuffer();
+        const workbook = XLSX.read(buffer, { type: "array" });
+        if (workbook.SheetNames && workbook.SheetNames.length > 0) {
+          setAvailableSheets(workbook.SheetNames);
+          setSelectedSheet(workbook.SheetNames[0]);
+        }
+      } catch (e: any) {
+        console.warn("Could not read sheet names from workbook:", e);
+        setImportError("Failed to parse sheet names from Excel file.");
+      } finally {
+        setReadingSheets(false);
+      }
+    }
+  };
 
   async function handleImportExcel() {
     if (!selectedFile) return;
@@ -260,17 +309,22 @@ export function SalesPage() {
       return;
     }
 
+    importCancelledRef.current = false;
     setImporting(true);
     setImportError("");
     setImportSuccess("");
+    setImportProgress(null);
+    setImportStats(null);
 
     try {
       const buffer = await selectedFile.arrayBuffer();
       const workbook = XLSX.read(buffer, { type: "array" });
-      const sheetName = workbook.SheetNames[0];
-      if (!sheetName) throw new Error("Walang laman o sira ang Excel file.");
+      const targetSheetName = selectedSheet || workbook.SheetNames[0];
+      if (!targetSheetName) throw new Error("Walang laman o sira ang Excel file.");
 
-      const sheet = workbook.Sheets[sheetName];
+      const sheet = workbook.Sheets[targetSheetName];
+      if (!sheet) throw new Error(`Target sheet/tab "${targetSheetName}" was not found in the Excel file.`);
+
       const jsonRows = XLSX.utils.sheet_to_json<Record<string, any>>(sheet, { defval: "" });
       if (jsonRows.length === 0) throw new Error("No data rows found in the Excel file.");
 
@@ -315,94 +369,268 @@ export function SalesPage() {
       let salesInsertedCount = 0;
       let paymentsInsertedCount = 0;
 
+      type RawParsedItem = {
+        rawDate: any;
+        orNum: number;
+        clientName: string;
+        designLabel: string;
+        projectSite: string;
+        cubicVal: number;
+        priceVal: number;
+        rawPaymentDate: any;
+        paymentType: string;
+        counterVal: string;
+        salesPerson: string;
+        pumpVal: number;
+      };
+
+      const parsedItems: RawParsedItem[] = [];
+      const uniqueOrNumbers = new Set<number>();
+      const clientNameSet = new Set<string>();
+      const siteNameSet = new Set<string>();
+      const designLabelSet = new Set<string>();
+
+      // Step 1: Parse and collect all valid rows
       for (const row of jsonRows) {
-        const rawDate = getColVal(row, REQUIRED_EXCEL_COLUMNS[0]); // Date
-        const rawOrNo = getColVal(row, REQUIRED_EXCEL_COLUMNS[1]); // OR NO
-        const clientName = String(getColVal(row, REQUIRED_EXCEL_COLUMNS[2]) || "").trim(); // CLIENT NAME
-        const designLabel = String(getColVal(row, REQUIRED_EXCEL_COLUMNS[3]) || "").trim(); // DESIGN
-        const projectSite = String(getColVal(row, REQUIRED_EXCEL_COLUMNS[4]) || "").trim(); // SITE
-        const cubicVal = Number(getColVal(row, REQUIRED_EXCEL_COLUMNS[5]) || 0); // CUBIC
-        const priceVal = Number(getColVal(row, REQUIRED_EXCEL_COLUMNS[6]) || 0); // PRICE
-        const rawPaymentDate = getColVal(row, REQUIRED_EXCEL_COLUMNS[7]); // PAYMENT DATE
-        const paymentType = String(getColVal(row, REQUIRED_EXCEL_COLUMNS[8]) || "").trim(); // TYPE
-        const counterVal = String(getColVal(row, REQUIRED_EXCEL_COLUMNS[9]) || "").trim(); // COUNTER
-        const salesPerson = String(getColVal(row, REQUIRED_EXCEL_COLUMNS[10]) || "").trim(); // SALES
-        const pumpVal = Number(getColVal(row, REQUIRED_EXCEL_COLUMNS[11]) || 0); // PUMPCRETE
+        const rawDate = getColVal(row, REQUIRED_EXCEL_COLUMNS[0]);
+        const rawOrNo = getColVal(row, REQUIRED_EXCEL_COLUMNS[1]);
+        const clientName = String(getColVal(row, REQUIRED_EXCEL_COLUMNS[2]) || "").trim();
+        const designLabel = String(getColVal(row, REQUIRED_EXCEL_COLUMNS[3]) || "").trim();
+        const projectSite = String(getColVal(row, REQUIRED_EXCEL_COLUMNS[4]) || "").trim();
+        const cubicVal = Number(getColVal(row, REQUIRED_EXCEL_COLUMNS[5]) || 0);
+        const priceVal = Number(getColVal(row, REQUIRED_EXCEL_COLUMNS[6]) || 0);
+        const rawPaymentDate = getColVal(row, REQUIRED_EXCEL_COLUMNS[7]);
+        const paymentType = String(getColVal(row, REQUIRED_EXCEL_COLUMNS[8]) || "").trim();
+        const counterVal = String(getColVal(row, REQUIRED_EXCEL_COLUMNS[9]) || "").trim();
+        const salesPerson = String(getColVal(row, REQUIRED_EXCEL_COLUMNS[10]) || "").trim();
+        const pumpVal = Number(getColVal(row, REQUIRED_EXCEL_COLUMNS[11]) || 0);
 
         const orNum = Number(rawOrNo || 0);
-        if (!orNum || !clientName) continue;
+        const hasRawDate = Boolean(rawDate && String(rawDate).trim() !== "");
 
-        const saleDate = parseExcelDate(rawDate);
-        const customerId = await ensureCustomerId(clientName);
-        if (!customerId) continue;
+        // STRICT VALIDATION: Row must have complete Date, OR NO, Client Name, Design, Site, Cubic (>0), Price (>0)
+        if (
+          !hasRawDate ||
+          !orNum ||
+          !clientName ||
+          !designLabel ||
+          !projectSite ||
+          !cubicVal ||
+          !priceVal
+        ) {
+          continue; // Skip incomplete row completely
+        }
 
-        const siteName = await ensureSiteName(projectSite || "Main");
-        const designId = await ensureDesignId(designLabel || "Default");
+        parsedItems.push({
+          rawDate,
+          orNum,
+          clientName,
+          designLabel,
+          projectSite,
+          cubicVal,
+          priceVal,
+          rawPaymentDate,
+          paymentType,
+          counterVal,
+          salesPerson,
+          pumpVal,
+        });
 
-        const hasPaymentDate = Boolean(rawPaymentDate && String(rawPaymentDate).trim() !== "");
-        const paymentDate = hasPaymentDate ? parseExcelDate(rawPaymentDate) : null;
-        const fullTotal = cubicVal * priceVal + pumpVal;
+        uniqueOrNumbers.add(orNum);
+        clientNameSet.add(clientName);
+        siteNameSet.add(projectSite);
+        designLabelSet.add(designLabel);
+      }
 
-        const saleRecordPayload = {
-          sale_or_number: orNum,
+      if (parsedItems.length === 0) {
+        throw new Error(
+          "No complete sales records found in the Excel file. Please ensure rows contain Date, OR NO, Client Name, Design, Site, Cubic (>0), and Price (>0)."
+        );
+      }
+
+      // Step 2: Check existing OR numbers in database to skip duplicates
+      const orNumberArray = Array.from(uniqueOrNumbers);
+      const { data: existingSales, error: fetchErr } = await supabase
+        .from("sales_records")
+        .select("sale_or_number")
+        .in("sale_or_number", orNumberArray);
+
+      if (fetchErr) throw new Error(`Database check error: ${fetchErr.message}`);
+
+      const existingOrSet = new Set((existingSales || []).map((s) => s.sale_or_number));
+      const seenOrsInFile = new Set<number>();
+      const newItemsToImport: RawParsedItem[] = [];
+
+      for (const item of parsedItems) {
+        if (existingOrSet.has(item.orNum) || seenOrsInFile.has(item.orNum)) {
+          continue;
+        }
+        seenOrsInFile.add(item.orNum);
+        newItemsToImport.push(item);
+      }
+
+      const duplicateCount = parsedItems.length - newItemsToImport.length;
+
+      const totalInFile = parsedItems.length;
+      let processedCount = duplicateCount;
+      let remainingCount = totalInFile - processedCount;
+
+      setImportStats({
+        totalInFile,
+        imported: 0,
+        skipped: duplicateCount,
+        processed: processedCount,
+        remaining: remainingCount,
+      });
+
+      if (newItemsToImport.length === 0) {
+        setImportSuccess(
+          `All ${parsedItems.length} record(s) in this Excel file already exist in the database. 0 new records inserted.`
+        );
+        return;
+      }
+
+      // Step 3: Ensure lookups exist
+      for (const cName of clientNameSet) {
+        if (importCancelledRef.current) break;
+        await ensureCustomerId(cName);
+      }
+      for (const sName of siteNameSet) {
+        if (importCancelledRef.current) break;
+        await ensureSiteName(sName);
+      }
+      for (const dLabel of designLabelSet) {
+        if (importCancelledRef.current) break;
+        await ensureDesignId(dLabel);
+      }
+
+      if (importCancelledRef.current) {
+        setImportError("Import process cancelled by user.");
+        return;
+      }
+
+      // Step 4: Build payloads
+      const salesToInsertPayloads = [];
+      const paymentInfoList: { orNum: number; rawPaymentDate: any; paymentType: string; salesPerson: string; fullTotal: number }[] = [];
+
+      for (const item of newItemsToImport) {
+        const saleDate = parseExcelDate(item.rawDate);
+        const customerId = await ensureCustomerId(item.clientName);
+        const siteName = await ensureSiteName(item.projectSite);
+        const designId = await ensureDesignId(item.designLabel);
+
+        const hasPaymentDate = Boolean(item.rawPaymentDate && String(item.rawPaymentDate).trim() !== "");
+        const fullTotal = item.cubicVal * item.priceVal + item.pumpVal;
+
+        salesToInsertPayloads.push({
+          sale_or_number: item.orNum,
           sale_date: saleDate,
           customer_id: customerId,
           manual_customer_name: null,
           concrete_design_id: designId,
           project_site: siteName,
-          cubic_volume: cubicVal,
-          unit_price: priceVal,
-          pumpcreate: pumpVal > 0 ? pumpVal : null,
+          cubic_volume: item.cubicVal,
+          unit_price: item.priceVal,
+          pumpcreate: item.pumpVal > 0 ? item.pumpVal : null,
           payment_status: hasPaymentDate ? "paid" : "unpaid",
-          remarks: buildRemarks("", counterVal),
-        };
+          remarks: buildRemarks("", item.counterVal),
+        });
 
-        const { data: upsertData, error: upsertError } = await supabase
+        if (hasPaymentDate) {
+          paymentInfoList.push({
+            orNum: item.orNum,
+            rawPaymentDate: item.rawPaymentDate,
+            paymentType: item.paymentType,
+            salesPerson: item.salesPerson,
+            fullTotal,
+          });
+        }
+      }
+
+      // Step 5: Batch insert sales records in chunks of 100
+      const chunkSize = 100;
+
+      for (let i = 0; i < salesToInsertPayloads.length; i += chunkSize) {
+        if (importCancelledRef.current) {
+          setImportError(
+            `Import cancelled by user. Stopped at ${processedCount} of ${totalInFile} records (${salesInsertedCount} inserted, ${duplicateCount} skipped).`
+          );
+          break;
+        }
+
+        const chunk = salesToInsertPayloads.slice(i, i + chunkSize);
+
+        const { data: insertedChunk, error: batchSalesErr } = await supabase
           .from("sales_records")
-          .upsert(saleRecordPayload, { onConflict: "sale_or_number" })
-          .select("id")
-          .single();
+          .upsert(chunk, { onConflict: "sale_or_number", ignoreDuplicates: true })
+          .select("id, sale_or_number");
 
-        if (upsertError) throw new Error(`Error inserting OR ${orNum}: ${upsertError.message}`);
-        salesInsertedCount++;
+        if (batchSalesErr) throw new Error(`Batch insert error: ${batchSalesErr.message}`);
+        const chunkInserted = insertedChunk?.length || 0;
+        salesInsertedCount += chunkInserted;
+        processedCount += chunkInserted;
+        remainingCount = Math.max(0, totalInFile - processedCount);
 
-        // Insert payment if PAYMENT DATE has a value
-        if (hasPaymentDate && paymentDate && upsertData?.id) {
-          const paymentRemarksParts = [];
-          if (salesPerson) paymentRemarksParts.push(`Sales: ${salesPerson}`);
-          paymentRemarksParts.push("Term: Paid");
+        setImportStats({
+          totalInFile,
+          imported: salesInsertedCount,
+          skipped: duplicateCount,
+          processed: processedCount,
+          remaining: remainingCount,
+        });
 
-          const paymentMethod = paymentType ? paymentType.toUpperCase() : "CASH";
+        // Map inserted record IDs by sale_or_number for payments
+        const insertedMap = new Map((insertedChunk || []).map((rec) => [rec.sale_or_number, rec.id]));
 
-          const { error: payErr } = await supabase
-            .from("sales_payments")
-            .insert({
-              sales_record_id: upsertData.id,
+        // Step 6: Batch insert payments for this chunk
+        const chunkPaymentPayloads = [];
+        for (const pInfo of paymentInfoList) {
+          const recordId = insertedMap.get(pInfo.orNum);
+          if (recordId) {
+            const paymentDate = parseExcelDate(pInfo.rawPaymentDate);
+            const paymentRemarksParts = [];
+            if (pInfo.salesPerson) paymentRemarksParts.push(`Sales: ${pInfo.salesPerson}`);
+            paymentRemarksParts.push("Term: Paid");
+
+            chunkPaymentPayloads.push({
+              sales_record_id: recordId,
               payment_date: paymentDate,
-              amount: fullTotal,
-              payment_method: paymentMethod,
+              amount: pInfo.fullTotal,
+              payment_method: pInfo.paymentType ? pInfo.paymentType.toUpperCase() : "CASH",
               reference_number: null,
               remarks: paymentRemarksParts.join(" | "),
             });
+          }
+        }
 
-          if (payErr) {
-            console.error(`Payment insert error for OR ${orNum}:`, payErr);
+        if (chunkPaymentPayloads.length > 0) {
+          const { data: insertedPayments, error: payBatchErr } = await supabase
+            .from("sales_payments")
+            .insert(chunkPaymentPayloads)
+            .select("id");
+
+          if (payBatchErr) {
+            console.warn("Payment batch insert notice:", payBatchErr.message);
           } else {
-            paymentsInsertedCount++;
+            paymentsInsertedCount += (insertedPayments?.length || 0);
           }
         }
       }
 
-      setImportSuccess(
-        `Successfully imported ${salesInsertedCount} sales record(s)${
-          paymentsInsertedCount > 0 ? ` and ${paymentsInsertedCount} payment(s)` : ""
-        }!`
-      );
+      if (!importCancelledRef.current) {
+        let resultMsg = `Import complete! Successfully inserted ${salesInsertedCount} new sales record(s)`;
+        if (paymentsInsertedCount > 0) resultMsg += ` and ${paymentsInsertedCount} payment(s)`;
+        if (duplicateCount > 0) resultMsg += `. (${duplicateCount} existing duplicate record(s) were skipped)`;
+        resultMsg += `!`;
+
+        setImportSuccess(resultMsg);
+      }
       await loadRows();
     } catch (err: any) {
       setImportError(err?.message || "Failed to process Excel file.");
     } finally {
       setImporting(false);
+      setImportProgress(null);
     }
   }
 
@@ -422,27 +650,32 @@ export function SalesPage() {
 
   const filteredRows = useMemo(() => {
     const cleaned = salesSearch.trim().toLowerCase();
-    if (!cleaned) return rows;
+    return rows.filter((row) => {
+      const matchesSearch =
+        !cleaned ||
+        [
+          `OR ${row.sale_or_number}`,
+          row.sale_or_number,
+          row.sale_date,
+          row.client_name,
+          row.design,
+          row.site,
+          row.cubic_volume,
+          row.unit_price,
+          row.pumpcreate,
+          row.total_amount,
+          row.payment_status,
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(cleaned);
 
-    return rows.filter((row) =>
-      [
-        `OR ${row.sale_or_number}`,
-        row.sale_or_number,
-        row.sale_date,
-        row.client_name,
-        row.design,
-        row.site,
-        row.cubic_volume,
-        row.unit_price,
-        row.pumpcreate,
-        row.total_amount,
-        row.payment_status,
-      ]
-        .join(" ")
-        .toLowerCase()
-        .includes(cleaned),
-    );
-  }, [rows, salesSearch]);
+      const matchesStatus =
+        statusFilter === "all" || row.payment_status === statusFilter;
+
+      return matchesSearch && matchesStatus;
+    });
+  }, [rows, salesSearch, statusFilter]);
 
   const handleCounterClick = (row: SaleRow, targetRows?: SaleRow[]) => {
     const targets = targetRows && targetRows.length > 0 ? targetRows : [row];
@@ -597,12 +830,42 @@ export function SalesPage() {
     );
     if (existing) return existing.id;
 
+    // Check database directly in case it exists in DB but not in React state yet
+    const { data: dbCustomer } = await supabase
+      .from("customers")
+      .select("id,name")
+      .ilike("name", cleaned)
+      .maybeSingle();
+
+    if (dbCustomer) {
+      setCustomers((current) => {
+        if (!current.some((c) => c.id === dbCustomer.id)) {
+          return [...current, { id: dbCustomer.id, label: dbCustomer.name }];
+        }
+        return current;
+      });
+      return dbCustomer.id;
+    }
+
     const { data, error: insertError } = await supabase
       .from("customers")
       .insert({ name: cleaned })
       .select("id,name")
       .single();
-    if (insertError) throw new Error(insertError.message);
+
+    if (insertError) {
+      // Handle race condition or duplicate key conflict
+      const { data: fallbackCustomer } = await supabase
+        .from("customers")
+        .select("id,name")
+        .ilike("name", cleaned)
+        .single();
+      if (fallbackCustomer) {
+        setCustomers((current) => [...current, { id: fallbackCustomer.id, label: fallbackCustomer.name }]);
+        return fallbackCustomer.id;
+      }
+      throw new Error(insertError.message);
+    }
 
     setCustomers((current) => [...current, { id: data.id, label: data.name }]);
     return data.id;
@@ -617,12 +880,41 @@ export function SalesPage() {
     );
     if (existing) return existing.label;
 
+    // Check database directly in case it exists in DB but not in React state yet
+    const { data: dbSite } = await supabase
+      .from("project_sites")
+      .select("id,name")
+      .ilike("name", cleaned)
+      .maybeSingle();
+
+    if (dbSite) {
+      setSites((current) => {
+        if (!current.some((s) => s.id === dbSite.id)) {
+          return [...current, { id: dbSite.id, label: dbSite.name }];
+        }
+        return current;
+      });
+      return dbSite.name;
+    }
+
     const { data, error: insertError } = await supabase
       .from("project_sites")
-      .insert({ name: cleaned })
+      .upsert({ name: cleaned }, { onConflict: "name" })
       .select("id,name")
       .single();
-    if (insertError) throw new Error(insertError.message);
+
+    if (insertError) {
+      const { data: fallbackSite } = await supabase
+        .from("project_sites")
+        .select("id,name")
+        .ilike("name", cleaned)
+        .single();
+      if (fallbackSite) {
+        setSites((current) => [...current, { id: fallbackSite.id, label: fallbackSite.name }]);
+        return fallbackSite.name;
+      }
+      throw new Error(insertError.message);
+    }
 
     setSites((current) => [...current, { id: data.id, label: data.name }]);
     return data.name;
@@ -637,12 +929,41 @@ export function SalesPage() {
     );
     if (existing) return existing.id;
 
+    // Check database directly in case it exists in DB but not in React state yet
+    const { data: dbDesign } = await supabase
+      .from("concrete_designs")
+      .select("id,code")
+      .ilike("code", cleaned)
+      .maybeSingle();
+
+    if (dbDesign) {
+      setDesigns((current) => {
+        if (!current.some((d) => d.id === dbDesign.id)) {
+          return [...current, { id: dbDesign.id, label: dbDesign.code }];
+        }
+        return current;
+      });
+      return dbDesign.id;
+    }
+
     const { data, error: insertError } = await supabase
       .from("concrete_designs")
-      .insert({ code: cleaned })
+      .upsert({ code: cleaned }, { onConflict: "code" })
       .select("id,code")
       .single();
-    if (insertError) throw new Error(insertError.message);
+
+    if (insertError) {
+      const { data: fallbackDesign } = await supabase
+        .from("concrete_designs")
+        .select("id,code")
+        .ilike("code", cleaned)
+        .single();
+      if (fallbackDesign) {
+        setDesigns((current) => [...current, { id: fallbackDesign.id, label: fallbackDesign.code }]);
+        return fallbackDesign.id;
+      }
+      throw new Error(insertError.message);
+    }
 
     setDesigns((current) => [...current, { id: data.id, label: data.code }]);
     return data.id;
@@ -776,6 +1097,10 @@ export function SalesPage() {
   }
 
   function startEditSale(row: SaleRow) {
+    if (row.payment_status === "paid") {
+      setError(`OR No. ${row.sale_or_number} is already paid and cannot be edited.`);
+      return;
+    }
     setEditingSale({ id: row.id, originalOrNumber: row.sale_or_number });
     setError("");
     setMessage("");
@@ -809,6 +1134,10 @@ export function SalesPage() {
   }
 
   async function deleteSale(row: SaleRow) {
+    if (row.payment_status === "paid") {
+      setError(`OR No. ${row.sale_or_number} is already paid and cannot be deleted.`);
+      return;
+    }
     if (!window.confirm("Are you sure you want to delete this sale? This will perform a hard delete.")) {
       return;
     }
@@ -837,6 +1166,16 @@ export function SalesPage() {
 
   async function deleteSelectedSales() {
     if (selectedSaleIds.size === 0) return;
+
+    const paidInSelection = Array.from(selectedSaleIds).filter((id) => {
+      const r = rows.find((sale) => sale.id === id);
+      return r?.payment_status === "paid";
+    });
+
+    if (paidInSelection.length > 0) {
+      setError(`Cannot delete ${paidInSelection.length} selected sale(s) because they are already marked as Paid.`);
+      return;
+    }
 
     const count = selectedSaleIds.size;
     if (!window.confirm(`Are you sure you want to delete ${count} selected sale(s)? This will perform a hard delete.`)) {
@@ -871,6 +1210,16 @@ export function SalesPage() {
 
   function startEditSelectedSales() {
     if (selectedSaleIds.size === 0) return;
+
+    const paidInSelection = Array.from(selectedSaleIds).filter((id) => {
+      const r = rows.find((sale) => sale.id === id);
+      return r?.payment_status === "paid";
+    });
+
+    if (paidInSelection.length > 0) {
+      setError(`Cannot edit ${paidInSelection.length} selected sale(s) because they are already marked as Paid.`);
+      return;
+    }
 
     const selectedRows = rows.filter((row) => selectedSaleIds.has(row.id));
     if (selectedRows.length === 0) return;
@@ -1094,6 +1443,14 @@ export function SalesPage() {
 
   return (
     <Stack gap="md">
+      <LoadingOverlay
+        visible={loading && !importing}
+        zIndex={1000}
+        transitionProps={{ duration: 0 }}
+        overlayProps={{ opacity: 0.35, blur: 0.5 }}
+        loaderProps={{ color: "blue", type: "bars", size: "lg" }}
+        style={{ position: "fixed", inset: 0 }}
+      />
       <Paper ref={formPanelRef} withBorder radius="sm" p="md" className="masterPanel">
         <form
           onSubmit={(event) => {
@@ -1508,14 +1865,27 @@ export function SalesPage() {
         p="md"
         className="masterPanel"
       >
-        <Group justify="space-between" mb="sm">
-          <Badge variant="outline">Sales List</Badge>
+        <Group justify="space-between" align="center" wrap="wrap" gap="xs" mb="sm">
+          <Group gap="xs">
+            <Badge variant="outline">Sales List</Badge>
+            <SegmentedControl
+              size="xs"
+              value={statusFilter}
+              onChange={(val) => setStatusFilter(val as any)}
+              data={[
+                { label: "All", value: "all" },
+                { label: "Unpaid", value: "unpaid" },
+                { label: "Paid", value: "paid" },
+                { label: "Deposit", value: "deposit" },
+              ]}
+            />
+          </Group>
           <Badge variant="light">
             {filteredRows.length} of {rows.length} records
           </Badge>
         </Group>
         <TextInput
-          placeholder="Search any sale"
+          placeholder="Search any sale (OR, Client Name, Site, Design...)"
           value={salesSearch}
           onChange={(event) => setSalesSearch(event.currentTarget.value)}
         />
@@ -1580,27 +1950,39 @@ export function SalesPage() {
         onCheckedRowIdsChange={setSelectedSaleIds}
         contextMenuItems={["edit", "delete", "counter_date"]}
         onCounterClick={handleCounterClick}
-        renderRowActions={(row) => (
-          <Group gap="xs" justify="center">
-            <Button
-              size="xs"
-              variant="subtle"
-              leftSection={<Edit3 size={14} />}
-              onClick={() => startEditSale(row)}
-            >
-              Edit
-            </Button>
-            <Button
-              size="xs"
-              variant="subtle"
-              color="red"
-              leftSection={<Trash2 size={14} />}
-              onClick={() => deleteSale(row)}
-            >
-              Delete
-            </Button>
-          </Group>
-        )}
+        renderRowActions={(row) => {
+          const isPaid = row.payment_status === "paid";
+          if (isPaid) {
+            return (
+              <Group gap="xs" justify="center">
+                <Badge color="green" variant="light" size="xs">
+                  Paid (Locked)
+                </Badge>
+              </Group>
+            );
+          }
+          return (
+            <Group gap="xs" justify="center">
+              <Button
+                size="xs"
+                variant="subtle"
+                leftSection={<Edit3 size={14} />}
+                onClick={() => startEditSale(row)}
+              >
+                Edit
+              </Button>
+              <Button
+                size="xs"
+                variant="subtle"
+                color="red"
+                leftSection={<Trash2 size={14} />}
+                onClick={() => deleteSale(row)}
+              >
+                Delete
+              </Button>
+            </Group>
+          );
+        }}
         renderCell={(row, column) => {
           if (column.key !== "payment_status") return undefined;
 
@@ -1703,14 +2085,107 @@ export function SalesPage() {
             placeholder="Select Excel File (.xlsx, .xls, .csv)..."
             accept=".xlsx, .xls, .csv"
             value={selectedFile}
-            onChange={(file) => {
-              setSelectedFile(file);
-              setImportSuccess("");
-              setImportError("");
-            }}
+            onChange={handleFileSelectionChange}
             clearable
+            disabled={importing || readingSheets}
             leftSection={<FileSpreadsheet size={16} />}
           />
+
+          {readingSheets && (
+            <Paper
+              withBorder
+              p="xs"
+              radius="sm"
+              style={{ backgroundColor: "rgba(15, 23, 42, 0.4)", borderColor: "rgba(59, 130, 246, 0.2)" }}
+            >
+              <Group gap="xs" align="center">
+                <Loader size="xs" color="blue" />
+                <Text size="xs" c="blue.3">
+                  Reading available sheets/tabs from Excel file... Please wait.
+                </Text>
+              </Group>
+            </Paper>
+          )}
+
+          {selectedFile && !readingSheets && (
+            <Select
+              label="Target Sheet / Tab"
+              placeholder="Select Excel sheet/tab to import..."
+              data={
+                availableSheets.length > 0
+                  ? availableSheets.map((s) => ({ value: s, label: s }))
+                  : selectedSheet
+                  ? [{ value: selectedSheet, label: selectedSheet }]
+                  : []
+              }
+              value={selectedSheet}
+              onChange={(val) => setSelectedSheet(val || "")}
+              allowDeselect={false}
+              disabled={importing}
+              checkIconPosition="right"
+              leftSection={<FileSpreadsheet size={16} />}
+            />
+          )}
+
+          {importing && (
+            <Paper
+              withBorder
+              p="md"
+              radius="sm"
+              style={{ backgroundColor: "rgba(15, 23, 42, 0.75)", borderColor: "rgba(59, 130, 246, 0.3)" }}
+            >
+              <Stack gap="md">
+                <Group justify="space-between" align="center">
+                  <Group gap="sm">
+                    <Loader size="sm" color="blue" />
+                    <Text size="sm" fw={600} c="blue.4">
+                      Importing Excel Data... Please wait
+                    </Text>
+                  </Group>
+                  <Button
+                    size="xs"
+                    color="red"
+                    variant="light"
+                    leftSection={<X size={14} />}
+                    onClick={handleCancelImport}
+                  >
+                    Cancel Import
+                  </Button>
+                </Group>
+
+                {importStats && (
+                  <>
+                    <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="xs">
+                      <Paper p="xs" radius="xs" style={{ backgroundColor: "rgba(255,255,255,0.03)", textAlign: "center" }}>
+                        <Text size="xs" c="dimmed">Total Rows</Text>
+                        <Text fw={700} size="md" c="blue.3">{importStats.totalInFile}</Text>
+                      </Paper>
+                      <Paper p="xs" radius="xs" style={{ backgroundColor: "rgba(34,197,94,0.08)", textAlign: "center" }}>
+                        <Text size="xs" c="green.4">Imported (New)</Text>
+                        <Text fw={700} size="md" c="green.4">{importStats.imported}</Text>
+                      </Paper>
+                      <Paper p="xs" radius="xs" style={{ backgroundColor: "rgba(234,179,8,0.08)", textAlign: "center" }}>
+                        <Text size="xs" c="yellow.4">Skipped (Duplicate)</Text>
+                        <Text fw={700} size="md" c="yellow.4">{importStats.skipped}</Text>
+                      </Paper>
+                      <Paper p="xs" radius="xs" style={{ backgroundColor: "rgba(239,68,68,0.08)", textAlign: "center" }}>
+                        <Text size="xs" c="orange.4">Remaining</Text>
+                        <Text fw={700} size="md" c="orange.4">{importStats.remaining}</Text>
+                      </Paper>
+                    </SimpleGrid>
+
+                    <Progress
+                      value={(importStats.processed / importStats.totalInFile) * 100}
+                      animated
+                      color="blue"
+                      size="md"
+                      radius="xl"
+                    />
+                  </>
+                )}
+              </Stack>
+            </Paper>
+          )}
 
           <Group justify="flex-end" mt="md">
             <Button
@@ -1722,14 +2197,14 @@ export function SalesPage() {
                 setImportSuccess("");
                 setImportError("");
               }}
-              disabled={importing}
+              disabled={importing || readingSheets}
             >
               Cancel
             </Button>
             <Button
               color="teal"
               leftSection={<Upload size={16} />}
-              disabled={!selectedFile || importing}
+              disabled={!selectedFile || importing || readingSheets}
               loading={importing}
               onClick={handleImportExcel}
             >

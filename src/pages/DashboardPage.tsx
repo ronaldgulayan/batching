@@ -4,6 +4,8 @@ import {
   Badge,
   Button,
   Group,
+  Loader,
+  LoadingOverlay,
   Paper,
   Progress,
   ScrollArea,
@@ -236,27 +238,33 @@ export function DashboardPage() {
         .select(
           "id,sale_or_number,sale_date,cubic_volume,unit_price,total_amount,pumpcreate,manual_customer_name,payment_status,customers(name),concrete_designs(code,pumpcreate)",
         )
-        .order("sale_date", { ascending: false }),
+        .order("sale_date", { ascending: false })
+        .limit(1000),
       supabase
         .from("sales_payments")
         .select("id,sales_record_id,payment_date,amount,payment_method,reference_number,remarks")
-        .order("payment_date", { ascending: false }),
+        .order("payment_date", { ascending: false })
+        .limit(1000),
       supabase
         .from("supplier_billing_summary")
         .select("id,dr_number,transaction_date,supplier_name,item_name,total_amount,paid_amount,balance_amount,payment_status")
-        .order("transaction_date", { ascending: false }),
+        .order("transaction_date", { ascending: false })
+        .limit(1000),
       supabase
         .from("supplier_payments")
         .select("id,supplier_transaction_id,payment_date,amount,ck_number,remarks")
-        .order("payment_date", { ascending: false }),
+        .order("payment_date", { ascending: false })
+        .limit(1000),
       supabase
         .from("graba_summary")
         .select("id,graba_dr_number,graba_date,supplier_name,items,total_amount,paid_amount,balance_amount,payment_status")
-        .order("graba_date", { ascending: false }),
+        .order("graba_date", { ascending: false })
+        .limit(1000),
       supabase
         .from("graba_payments")
         .select("id,graba_record_id,payment_date,amount,payment_method,reference_number,remarks")
-        .order("payment_date", { ascending: false }),
+        .order("payment_date", { ascending: false })
+        .limit(1000),
     ]);
 
     setLoading(false);
@@ -455,6 +463,14 @@ export function DashboardPage() {
 
   return (
     <Stack gap='md'>
+      <LoadingOverlay
+        visible={loading}
+        zIndex={1000}
+        transitionProps={{ duration: 0 }}
+        overlayProps={{ opacity: 0.35, blur: 0.5 }}
+        loaderProps={{ color: "blue", type: "bars", size: "lg" }}
+        style={{ position: "fixed", inset: 0 }}
+      />
       <Paper
         withBorder
         radius='sm'
@@ -770,7 +786,7 @@ export function DashboardPage() {
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
-                {report.unpaidSummary.map((customer) => (
+                {report.unpaidSummary.slice(0, 15).map((customer) => (
                   <Table.Tr key={customer.customer}>
                     <Table.Td>{customer.customer}</Table.Td>
                     <Table.Td>{displayMoney(customer.unpaidAmount)}</Table.Td>
@@ -793,6 +809,7 @@ export function DashboardPage() {
 
 function ClientChequesCard({ items }: { items: ClientChequeItem[] }) {
   const totalAmount = useMemo(() => items.reduce((sum, item) => sum + item.amount, 0), [items]);
+  const displayedItems = useMemo(() => items.slice(0, 20), [items]);
 
   return (
     <Paper withBorder radius="sm" p="md" className="masterPanel">
@@ -814,7 +831,7 @@ function ClientChequesCard({ items }: { items: ClientChequeItem[] }) {
 
         <ScrollArea h={220} type="auto">
           <Stack gap="xs">
-            {items.map((item, index) => (
+            {displayedItems.map((item, index) => (
               <Paper
                 key={`${item.id}-${index}`}
                 p="xs"
@@ -863,6 +880,7 @@ function ClientChequesCard({ items }: { items: ClientChequeItem[] }) {
 
 function SupplierUnpaidCard({ items }: { items: SupplierUnpaidItem[] }) {
   const totalAmount = useMemo(() => items.reduce((sum, item) => sum + item.unpaidAmount, 0), [items]);
+  const displayedItems = useMemo(() => items.slice(0, 20), [items]);
 
   return (
     <Paper withBorder radius="sm" p="md" className="masterPanel">
@@ -884,7 +902,7 @@ function SupplierUnpaidCard({ items }: { items: SupplierUnpaidItem[] }) {
 
         <ScrollArea h={220} type="auto">
           <Stack gap="xs">
-            {items.map((item) => (
+            {displayedItems.map((item) => (
               <Paper
                 key={item.supplier_name}
                 p="xs"
@@ -928,6 +946,7 @@ function SupplierUnpaidCard({ items }: { items: SupplierUnpaidItem[] }) {
 
 function SupplierChequesCard({ items }: { items: SupplierChequeItem[] }) {
   const totalAmount = useMemo(() => items.reduce((sum, item) => sum + item.amount, 0), [items]);
+  const displayedItems = useMemo(() => items.slice(0, 20), [items]);
 
   return (
     <Paper withBorder radius="sm" p="md" className="masterPanel">
@@ -949,7 +968,7 @@ function SupplierChequesCard({ items }: { items: SupplierChequeItem[] }) {
 
         <ScrollArea h={220} type="auto">
           <Stack gap="xs">
-            {items.map((item, index) => (
+            {displayedItems.map((item, index) => (
               <Paper
                 key={`${item.id}-${index}`}
                 p="xs"

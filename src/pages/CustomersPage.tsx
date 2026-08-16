@@ -5,6 +5,8 @@ import {
   Badge,
   Button,
   Group,
+  Loader,
+  LoadingOverlay,
   Pagination,
   Paper,
   ScrollArea,
@@ -279,6 +281,14 @@ export function CustomersPage() {
 
   return (
     <Stack gap="md">
+      <LoadingOverlay
+        visible={loading}
+        zIndex={1000}
+        transitionProps={{ duration: 0 }}
+        overlayProps={{ opacity: 0.35, blur: 0.5 }}
+        loaderProps={{ color: "blue", type: "bars", size: "lg" }}
+        style={{ position: "fixed", inset: 0 }}
+      />
       <div className="formActions">
         <Button
           leftSection={<RefreshCw size={16} />}
@@ -297,16 +307,6 @@ export function CustomersPage() {
           title="Supabase is not configured"
         >
           Supabase credentials are missing from .env.
-        </Alert>
-      )}
-
-      {error && (
-        <Alert
-          icon={<AlertCircle size={16} />}
-          color="red"
-          title="Database error"
-        >
-          {error}
         </Alert>
       )}
 

@@ -18,6 +18,7 @@ export type ModuleKey =
   | 'suppliers'
   | 'maintenance-graba-items'
   | 'maintenance-graba-trucks'
+  | 'maintenance-users'
   | 'expenses'
   | 'masters';
 

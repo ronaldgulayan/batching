@@ -12,6 +12,7 @@ import {
   Badge,
   Loader,
   Center,
+  Modal,
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { Building2, Wrench, LogOut, User } from "lucide-react";
@@ -25,6 +26,7 @@ import { MaintenanceSitesPage } from "./pages/MaintenanceSitesPage";
 import { SupplierTransactionsPage } from "./pages/SupplierTransactionsPage";
 import { MaintenanceGrabaItemsPage } from "./pages/MaintenanceGrabaItemsPage";
 import { MaintenanceGrabaTrucksPage } from "./pages/MaintenanceGrabaTrucksPage";
+import { MaintenanceUsersPage } from "./pages/MaintenanceUsersPage";
 import { PaymentsPage } from "./pages/PaymentsPage";
 import { SalesPage } from "./pages/SalesPage";
 import { LoginPage } from "./pages/LoginPage";
@@ -35,10 +37,43 @@ import type { Session } from "@supabase/supabase-js";
 
 export function App() {
   const [opened, { toggle, close }] = useDisclosure();
+  const [logoutOpened, { open: openLogoutModal, close: closeLogoutModal }] = useDisclosure(false);
   const [activeModule, setActiveModule] = useState<ModuleKey>("dashboard");
   const [session, setSession] = useState<Session | null>(null);
+  const [userRole, setUserRole] = useState<"admin" | "staff">("admin");
   const [checkingAuth, setCheckingAuth] = useState(true);
   const theme = useMantineTheme();
+
+  const syncUserRole = async (currentSession: Session | null) => {
+    if (isSupabaseConfigured && currentSession?.user?.id) {
+      try {
+        const { data: prof } = await supabase
+          .from("profiles")
+          .select("role")
+          .eq("id", currentSession.user.id)
+          .maybeSingle();
+
+        if (prof?.role) {
+          const roleVal = prof.role.toLowerCase() === "admin" ? "admin" : "staff";
+          setUserRole(roleVal);
+          localStorage.setItem("solid_batching_user_role", roleVal);
+          return;
+        }
+      } catch (e) {
+        console.warn("Could not fetch user profile role:", e);
+      }
+    }
+
+    const savedRole = localStorage.getItem("solid_batching_user_role");
+    if (savedRole) {
+      setUserRole(savedRole.toLowerCase() === "admin" ? "admin" : "staff");
+    } else {
+      const email = currentSession?.user?.email || localStorage.getItem("solid_batching_user_email") || "";
+      const roleVal = email === "admin@solidbatching.com" ? "admin" : "staff";
+      setUserRole(roleVal);
+      localStorage.setItem("solid_batching_user_role", roleVal);
+    }
+  };
 
   useEffect(() => {
     if (isSupabaseConfigured) {
@@ -46,11 +81,14 @@ export function App() {
       supabase.auth.getSession().then(({ data: { session } }) => {
         if (session) {
           setSession(session);
+          void syncUserRole(session);
         } else {
           const savedAuth = localStorage.getItem("solid_batching_auth");
           const savedEmail = localStorage.getItem("solid_batching_user_email") || "admin@solidbatching.com";
           if (savedAuth === "true") {
-            setSession({ user: { email: savedEmail } } as unknown as Session);
+            const fakeSession = { user: { email: savedEmail } } as unknown as Session;
+            setSession(fakeSession);
+            void syncUserRole(fakeSession);
           }
         }
         setCheckingAuth(false);
@@ -60,11 +98,14 @@ export function App() {
       const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
         if (session) {
           setSession(session);
+          void syncUserRole(session);
         } else {
           const savedAuth = localStorage.getItem("solid_batching_auth");
           const savedEmail = localStorage.getItem("solid_batching_user_email") || "admin@solidbatching.com";
           if (savedAuth === "true") {
-            setSession({ user: { email: savedEmail } } as unknown as Session);
+            const fakeSession = { user: { email: savedEmail } } as unknown as Session;
+            setSession(fakeSession);
+            void syncUserRole(fakeSession);
           }
         }
       });
@@ -77,11 +118,19 @@ export function App() {
       const savedAuth = localStorage.getItem("solid_batching_auth");
       const savedEmail = localStorage.getItem("solid_batching_user_email") || "admin@solidbatching.com";
       if (savedAuth === "true") {
-        setSession({ user: { email: savedEmail } } as unknown as Session);
+        const fakeSession = { user: { email: savedEmail } } as unknown as Session;
+        setSession(fakeSession);
+        void syncUserRole(fakeSession);
       }
       setCheckingAuth(false);
     }
   }, []);
+
+  useEffect(() => {
+    if (userRole === "staff" && activeModule.startsWith("maintenance-")) {
+      setActiveModule("dashboard");
+    }
+  }, [userRole, activeModule]);
 
   const handleLogout = async () => {
     if (isSupabaseConfigured) {
@@ -89,6 +138,7 @@ export function App() {
     }
     localStorage.removeItem("solid_batching_auth");
     localStorage.removeItem("solid_batching_user_email");
+    localStorage.removeItem("solid_batching_user_role");
     setSession(null);
   };
 
@@ -106,46 +156,49 @@ export function App() {
   if (!session) {
     return (
       <LoginPage
-        onLoginSuccess={(newSession) =>
-          setSession(newSession || ({ user: { email: "admin@solidbatching.com" } } as unknown as Session))
-        }
+        onLoginSuccess={(newSession) => {
+          setSession(newSession || null);
+          void syncUserRole(newSession || null);
+        }}
       />
     );
   }
 
-  const userEmail =
-    session.user?.email ||
-    localStorage.getItem("solid_batching_user_email") ||
-    "admin@solidbatching.com";
+  const userEmail = session.user?.email || "admin@solidbatching.com";
 
   return (
     <AppShell
-      header={{ height: 64 }}
+      header={{ height: 60 }}
       navbar={{
-        width: 292,
+        width: 240,
         breakpoint: "sm",
         collapsed: { mobile: !opened },
       }}
-      padding="lg"
+      padding="md"
     >
-      <AppShell.Header style={{ borderBottom: "1px solid rgba(255, 255, 255, 0.08)", background: "#111622" }}>
-        <Group
-          h="100%"
-          px="lg"
-          justify="space-between"
-        >
-          <Group gap="md">
-            <Burger
-              opened={opened}
-              onClick={toggle}
-              hiddenFrom="sm"
-              size="sm"
-            />
-            <div className="brandMark">
-              <Building2
-                size={24}
-                color={theme.colors.blue[6]}
-              />
+      <AppShell.Header
+        p="md"
+        className="appHeader"
+        style={{ borderBottom: "1px solid rgba(255, 255, 255, 0.08)", background: "#111622" }}
+      >
+        <Group justify="space-between" h="100%">
+          <Group>
+            <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" />
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 8,
+                background: "linear-gradient(135deg, #2563eb 0%, #4f46e5 100%)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: "#fff",
+                fontWeight: 800,
+                fontSize: 16,
+              }}
+            >
+              S
             </div>
             <div>
               <Title
@@ -164,6 +217,9 @@ export function App() {
               <Text size="sm" fw={500} c="gray.3">
                 {userEmail}
               </Text>
+              <Badge color={userRole === "admin" ? "red" : "blue"} variant="light" size="xs">
+                {userRole.toUpperCase()}
+              </Badge>
               {!isSupabaseConfigured && (
                 <Badge color="yellow" variant="light" size="xs">
                   Demo
@@ -176,7 +232,7 @@ export function App() {
               variant="subtle"
               color="red"
               size="xs"
-              onClick={handleLogout}
+              onClick={openLogoutModal}
               style={{
                 borderRadius: "6px",
               }}
@@ -206,27 +262,29 @@ export function App() {
               className="navItem"
             />
           ))}
-          <NavLink
-            label="Maintenance"
-            active={activeModule.startsWith("maintenance-")}
-            leftSection={<Wrench size={18} />}
-            defaultOpened
-            className="navItem"
-          >
-            {maintenanceNavItems.map((item) => (
-              <NavLink
-                key={item.key}
-                label={item.label}
-                active={activeModule === item.key}
-                leftSection={<item.icon size={16} />}
-                onClick={() => {
-                  setActiveModule(item.key);
-                  close();
-                }}
-                className="navItem"
-              />
-            ))}
-          </NavLink>
+          {userRole === "admin" && (
+            <NavLink
+              label="Maintenance"
+              active={activeModule.startsWith("maintenance-")}
+              leftSection={<Wrench size={18} />}
+              defaultOpened
+              className="navItem"
+            >
+              {maintenanceNavItems.map((item) => (
+                <NavLink
+                  key={item.key}
+                  label={item.label}
+                  active={activeModule === item.key}
+                  leftSection={<item.icon size={16} />}
+                  onClick={() => {
+                    setActiveModule(item.key);
+                    close();
+                  }}
+                  className="navItem"
+                />
+              ))}
+            </NavLink>
+          )}
         </Stack>
       </AppShell.Navbar>
 
@@ -249,9 +307,46 @@ export function App() {
           {activeModule === "maintenance-graba-trucks" && (
             <MaintenanceGrabaTrucksPage />
           )}
+          {activeModule === "maintenance-users" && <MaintenanceUsersPage />}
           {activeModule === "expenses" && <ExpensesPurchasingPage />}
         </div>
       </AppShell.Main>
+
+      {/* Logout Confirmation Modal */}
+      <Modal
+        opened={logoutOpened}
+        onClose={closeLogoutModal}
+        title={
+          <Group gap="xs">
+            <LogOut size={20} color="#ef4444" />
+            <Text fw={700}>Confirm Sign Out</Text>
+          </Group>
+        }
+        centered
+        radius="md"
+        size="sm"
+      >
+        <Stack gap="md">
+          <Text size="sm">
+            Are you sure you want to sign out of Solid Batching System?
+          </Text>
+          <Group justify="flex-end" gap="xs">
+            <Button variant="light" color="gray" onClick={closeLogoutModal}>
+              Cancel
+            </Button>
+            <Button
+              color="red"
+              leftSection={<LogOut size={16} />}
+              onClick={async () => {
+                closeLogoutModal();
+                await handleLogout();
+              }}
+            >
+              Sign Out
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
     </AppShell>
   );
 }

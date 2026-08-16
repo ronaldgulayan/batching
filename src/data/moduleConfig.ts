@@ -4,6 +4,7 @@ import {
   Landmark,
   ReceiptText,
   Truck,
+  UserCheck,
   UsersRound,
 } from "lucide-react";
 import type { ModuleKey, SpreadsheetColumn } from "../types";
@@ -135,5 +136,10 @@ export const maintenanceNavItems = [
     key: "maintenance-graba-trucks" as const,
     label: "Trucks",
     icon: Truck,
+  },
+  {
+    key: "maintenance-users" as const,
+    label: "Users",
+    icon: UserCheck,
   },
 ];

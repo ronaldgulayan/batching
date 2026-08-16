@@ -5,6 +5,8 @@ import {
   Badge,
   Button,
   Group,
+  Loader,
+  LoadingOverlay,
   Paper,
   SimpleGrid,
   Stack,
@@ -212,6 +214,14 @@ export function ExpensesPurchasingPage() {
 
   return (
     <Stack gap="md">
+      <LoadingOverlay
+        visible={loading}
+        zIndex={1000}
+        transitionProps={{ duration: 0 }}
+        overlayProps={{ opacity: 0.35, blur: 0.5 }}
+        loaderProps={{ color: "blue", type: "bars", size: "lg" }}
+        style={{ position: "fixed", inset: 0 }}
+      />
       <Group justify="space-between" align="center">
         <Title order={2}>Expenses</Title>
         <Button

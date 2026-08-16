@@ -4,6 +4,8 @@ import {
   Badge,
   Button,
   Group,
+  Loader,
+  LoadingOverlay,
   NumberInput,
   Paper,
   Select,
@@ -216,6 +218,7 @@ export function PaymentsPage() {
   } | null>(null);
   const [unpaidSearch, setUnpaidSearch] = useState("");
   const [selectedUnpaidDates, setSelectedUnpaidDates] = useState<string[]>([]);
+  const [selectedUnpaidClients, setSelectedUnpaidClients] = useState<string[]>([]);
   const [paidSearch, setPaidSearch] = useState("");
 
   // Graba State
@@ -370,20 +373,54 @@ export function PaymentsPage() {
     return Array.from(datesSet).sort((a, b) => b.localeCompare(a));
   }, [payableSales]);
 
+  const availableUnpaidClients = useMemo(() => {
+    const clientsSet = new Set<string>();
+    payableSales.forEach((s) => {
+      if (s.customer_name) clientsSet.add(s.customer_name);
+    });
+    return Array.from(clientsSet).sort();
+  }, [payableSales]);
+
   const filteredPayableSales = useMemo(
     () =>
       payableSales.filter((sale) => {
         const matchesSearch = saleMatchesSearch(sale, unpaidSearch);
         const matchesDate =
           selectedUnpaidDates.length === 0 || selectedUnpaidDates.includes(sale.sale_date);
-        return matchesSearch && matchesDate;
+        const matchesClient =
+          selectedUnpaidClients.length === 0 || selectedUnpaidClients.includes(sale.customer_name);
+        return matchesSearch && matchesDate && matchesClient;
       }),
-    [payableSales, unpaidSearch, selectedUnpaidDates]
+    [payableSales, unpaidSearch, selectedUnpaidDates, selectedUnpaidClients]
   );
 
   useEffect(() => {
     setSelectedUnpaidRowIds(new Set());
-  }, [selectedUnpaidDates, unpaidSearch]);
+  }, [selectedUnpaidDates, selectedUnpaidClients, unpaidSearch]);
+
+  const handleSelectAllUnpaidSales = () => {
+    setSelectedUnpaidRowIds(new Set(filteredPayableSales.map((s) => s.id)));
+  };
+
+  const handleClearUnpaidSalesSelection = () => {
+    setSelectedUnpaidRowIds(new Set());
+  };
+
+  const handleSelectAllUnpaidGraba = () => {
+    setSelectedUnpaidGrabaRowIds(new Set(filteredPayableGraba.map((g) => g.id)));
+  };
+
+  const handleClearUnpaidGrabaSelection = () => {
+    setSelectedUnpaidGrabaRowIds(new Set());
+  };
+
+  const handleSelectAllUnpaidSupplier = () => {
+    setSelectedUnpaidSupplierRowIds(new Set(filteredPayableSupplier.map((s) => s.id)));
+  };
+
+  const handleClearUnpaidSupplierSelection = () => {
+    setSelectedUnpaidSupplierRowIds(new Set());
+  };
 
   // Sales derivations
   const selectedDrafts = useMemo(
@@ -1394,6 +1431,14 @@ export function PaymentsPage() {
 
   return (
     <Stack gap="md">
+      <LoadingOverlay
+        visible={loading}
+        zIndex={1000}
+        transitionProps={{ duration: 0 }}
+        overlayProps={{ opacity: 0.35, blur: 0.5 }}
+        loaderProps={{ color: "blue", type: "bars", size: "lg" }}
+        style={{ position: "fixed", inset: 0 }}
+      />
       {/* Tab Switcher */}
       <Group justify="space-between" align="center">
         <SegmentedControl
@@ -1612,8 +1657,39 @@ export function PaymentsPage() {
         <Stack gap="xl">
           <Stack gap="xs">
             <Group justify="space-between" align="center" wrap="wrap" gap="xs">
-              <Text size="lg" fw={600}>Unpaid OR Transactions</Text>
               <Group gap="xs">
+                <Text size="lg" fw={600}>Unpaid OR Transactions</Text>
+                <Button
+                  size="xs"
+                  variant="light"
+                  color="blue"
+                  onClick={handleSelectAllUnpaidSales}
+                  disabled={filteredPayableSales.length === 0}
+                >
+                  Select All ({filteredPayableSales.length})
+                </Button>
+                {selectedUnpaidRowIds.size > 0 && (
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="gray"
+                    onClick={handleClearUnpaidSalesSelection}
+                  >
+                    Clear ({selectedUnpaidRowIds.size})
+                  </Button>
+                )}
+              </Group>
+              <Group gap="xs">
+                <MultiSelect
+                  placeholder="Filter by Client(s)..."
+                  data={availableUnpaidClients}
+                  value={selectedUnpaidClients}
+                  onChange={setSelectedUnpaidClients}
+                  clearable
+                  searchable
+                  checkIconPosition="right"
+                  style={{ minWidth: 200 }}
+                />
                 <MultiSelect
                   placeholder="Filter by Date(s)..."
                   data={availableUnpaidDates}
@@ -1622,13 +1698,13 @@ export function PaymentsPage() {
                   clearable
                   searchable
                   checkIconPosition="right"
-                  style={{ minWidth: 220 }}
+                  style={{ minWidth: 180 }}
                 />
                 <TextInput
-                  placeholder="Search Client..."
+                  placeholder="Search..."
                   value={unpaidSearch}
                   onChange={(e) => setUnpaidSearch(e.currentTarget.value)}
-                  style={{ width: 200 }}
+                  style={{ width: 160 }}
                 />
               </Group>
             </Group>
@@ -1686,8 +1762,29 @@ export function PaymentsPage() {
       {activeTab === "graba" && (
         <Stack gap="xl">
           <Stack gap="xs">
-            <Group justify="space-between">
-              <Text size="lg" fw={600}>Unpaid Graba Records</Text>
+            <Group justify="space-between" align="center" wrap="wrap" gap="xs">
+              <Group gap="xs">
+                <Text size="lg" fw={600}>Unpaid Graba Records</Text>
+                <Button
+                  size="xs"
+                  variant="light"
+                  color="blue"
+                  onClick={handleSelectAllUnpaidGraba}
+                  disabled={filteredPayableGraba.length === 0}
+                >
+                  Select All ({filteredPayableGraba.length})
+                </Button>
+                {selectedUnpaidGrabaRowIds.size > 0 && (
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="gray"
+                    onClick={handleClearUnpaidGrabaSelection}
+                  >
+                    Clear ({selectedUnpaidGrabaRowIds.size})
+                  </Button>
+                )}
+              </Group>
               <TextInput
                 placeholder="Search Supplier/DR..."
                 value={unpaidGrabaSearch}
@@ -1750,8 +1847,29 @@ export function PaymentsPage() {
       {activeTab === "supplier" && (
         <Stack gap="xl">
           <Stack gap="xs">
-            <Group justify="space-between">
-              <Text size="lg" fw={600}>Unpaid Supplier Transactions</Text>
+            <Group justify="space-between" align="center" wrap="wrap" gap="xs">
+              <Group gap="xs">
+                <Text size="lg" fw={600}>Unpaid Supplier Transactions</Text>
+                <Button
+                  size="xs"
+                  variant="light"
+                  color="blue"
+                  onClick={handleSelectAllUnpaidSupplier}
+                  disabled={filteredPayableSupplier.length === 0}
+                >
+                  Select All ({filteredPayableSupplier.length})
+                </Button>
+                {selectedUnpaidSupplierRowIds.size > 0 && (
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="gray"
+                    onClick={handleClearUnpaidSupplierSelection}
+                  >
+                    Clear ({selectedUnpaidSupplierRowIds.size})
+                  </Button>
+                )}
+              </Group>
               <TextInput
                 placeholder="Search Supplier/DR..."
                 value={unpaidSupplierSearch}

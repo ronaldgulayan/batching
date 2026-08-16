@@ -34,37 +34,72 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
     setError("");
     setLoading(true);
 
+    const cleanEmail = email.trim();
+
     try {
       if (isSupabaseConfigured) {
         // Attempt real Supabase Auth
         const { data, error: authError } = await supabase.auth.signInWithPassword({
-          email,
+          email: cleanEmail,
           password,
         });
 
         if (authError) {
-          // If it fails, let's also allow a local admin fallback as a convenience for development
-          if (email === "admin@solidbatching.com" && password === "admin123") {
+          // Allow local admin fallback if credentials match demo
+          if (cleanEmail === "admin@solidbatching.com" && (password === "123456789" || password === "admin123")) {
             localStorage.setItem("solid_batching_auth", "true");
-            localStorage.setItem("solid_batching_user_email", email);
-            onLoginSuccess({ user: { email } } as unknown as Session);
+            localStorage.setItem("solid_batching_user_email", cleanEmail);
+            localStorage.setItem("solid_batching_user_role", "admin");
+            onLoginSuccess({ user: { email: cleanEmail } } as unknown as Session);
             return;
+          }
+
+          const msg = authError.message.toLowerCase();
+          if (msg.includes("invalid login credentials") || msg.includes("user not found")) {
+            throw new Error("No account found with these credentials. Please check your email and password.");
+          } else if (msg.includes("email not confirmed")) {
+            throw new Error("Email address is not yet confirmed. Please check your email inbox.");
           }
           throw authError;
         }
 
         if (data.session) {
-          localStorage.setItem("solid_batching_user_email", data.session.user?.email || email);
+          localStorage.setItem("solid_batching_user_email", data.session.user?.email || cleanEmail);
+          try {
+            const { data: prof } = await supabase
+              .from("profiles")
+              .select("role")
+              .eq("id", data.session.user.id)
+              .maybeSingle();
+            const r = prof?.role?.toLowerCase() === "admin" ? "admin" : "staff";
+            localStorage.setItem("solid_batching_user_role", r);
+          } catch (e) {
+            localStorage.setItem("solid_batching_user_role", cleanEmail === "admin@solidbatching.com" ? "admin" : "staff");
+          }
           onLoginSuccess(data.session);
         }
       } else {
         // Local simulation fallback
-        if (email === "admin@solidbatching.com" && password === "admin123") {
+        const savedUsersRaw = localStorage.getItem("solid_batching_users_list");
+        const savedUsers: any[] = savedUsersRaw ? JSON.parse(savedUsersRaw) : [];
+        const userMatch = savedUsers.find((u) => u.email?.toLowerCase() === cleanEmail.toLowerCase());
+
+        if (cleanEmail === "admin@solidbatching.com" && (password === "123456789" || password === "admin123")) {
           localStorage.setItem("solid_batching_auth", "true");
-          localStorage.setItem("solid_batching_user_email", email);
-          onLoginSuccess({ user: { email } } as unknown as Session);
+          localStorage.setItem("solid_batching_user_email", cleanEmail);
+          localStorage.setItem("solid_batching_user_role", "admin");
+          onLoginSuccess({ user: { email: cleanEmail } } as unknown as Session);
+        } else if (userMatch) {
+          if (password === "123456789" || password === "admin123") {
+            localStorage.setItem("solid_batching_auth", "true");
+            localStorage.setItem("solid_batching_user_email", userMatch.email);
+            localStorage.setItem("solid_batching_user_role", userMatch.role === "admin" ? "admin" : "staff");
+            onLoginSuccess({ user: { email: userMatch.email } } as unknown as Session);
+          } else {
+            setError("Incorrect password. Please try again.");
+          }
         } else {
-          setError("Invalid local credentials. Use: admin@solidbatching.com / admin123");
+          setError("No account found with this email. Please check your email or contact an administrator to register your account.");
         }
       }
     } catch (err: any) {
@@ -220,7 +255,7 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
             {!isSupabaseConfigured && (
               <Paper p="xs" radius="sm" style={{ backgroundColor: "rgba(251, 191, 36, 0.06)", border: "1px solid rgba(251, 191, 36, 0.15)" }}>
                 <Text size="xs" c="yellow.4" style={{ textAlign: "center" }}>
-                  <strong>Demo account:</strong> admin@solidbatching.com / admin123
+                  <strong>Demo account:</strong> admin@solidbatching.com / 123456789
                 </Text>
               </Paper>
             )}

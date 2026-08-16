@@ -4,6 +4,8 @@ import {
   Badge,
   Button,
   Group,
+  Loader,
+  LoadingOverlay,
   NumberInput,
   Paper,
   SimpleGrid,
@@ -363,6 +365,14 @@ export function GrabaPage() {
 
   return (
     <Stack gap="md">
+      <LoadingOverlay
+        visible={loading}
+        zIndex={1000}
+        transitionProps={{ duration: 0 }}
+        overlayProps={{ opacity: 0.35, blur: 0.5 }}
+        loaderProps={{ color: "blue", type: "bars", size: "lg" }}
+        style={{ position: "fixed", inset: 0 }}
+      />
       <Paper
         withBorder
         p="md"
