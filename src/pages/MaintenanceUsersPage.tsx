@@ -34,6 +34,7 @@ import {
   Check,
 } from "lucide-react";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
+import { useSnackbar } from "../context/SnackbarContext";
 
 export type UserProfileRow = {
   id: string;
@@ -62,6 +63,7 @@ const DEFAULT_DEMO_USERS: UserProfileRow[] = [
 ];
 
 export function MaintenanceUsersPage() {
+  const { showSuccess, showError } = useSnackbar();
   const [users, setUsers] = useState<UserProfileRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -133,6 +135,7 @@ export function MaintenanceUsersPage() {
     setFullName("");
     setRole("staff");
     setError("");
+    setSuccessMsg("");
     open();
   };
 
@@ -143,6 +146,7 @@ export function MaintenanceUsersPage() {
     setFullName(user.full_name || "");
     setRole(user.role || "staff");
     setError("");
+    setSuccessMsg("");
     open();
   };
 
@@ -189,7 +193,9 @@ export function MaintenanceUsersPage() {
             throw new Error(rpcRes.error || "Failed to update user.");
           }
 
-          setSuccessMsg(`User ${email} updated successfully.`);
+          const msg = `User ${email} updated successfully.`;
+          setSuccessMsg(msg);
+          showSuccess(msg);
         } else {
           // Create new user via RPC admin_create_user or supabase auth
           const { data: rpcRes, error: rpcErr } = await supabase.rpc("admin_create_user", {
@@ -226,7 +232,9 @@ export function MaintenanceUsersPage() {
             throw new Error(rpcRes.error || "Failed to create user.");
           }
 
-          setSuccessMsg(`New user ${email} created successfully.`);
+          const msg = `New user ${email} created successfully.`;
+          setSuccessMsg(msg);
+          showSuccess(msg);
         }
         await loadUsers();
       } else {
@@ -238,7 +246,9 @@ export function MaintenanceUsersPage() {
               ? { ...u, full_name: fullName.trim(), role, updated_at: new Date().toISOString() }
               : u
           );
-          setSuccessMsg(`User ${email} updated successfully (local).`);
+          const msg = `User ${email} updated successfully (local).`;
+          setSuccessMsg(msg);
+          showSuccess(msg);
         } else {
           const newRow: UserProfileRow = {
             id: `usr-local-${Date.now()}`,
@@ -248,7 +258,9 @@ export function MaintenanceUsersPage() {
             created_at: new Date().toISOString(),
           };
           updatedList = [newRow, ...users];
-          setSuccessMsg(`User ${email} added successfully (local).`);
+          const msg = `User ${email} added successfully (local).`;
+          setSuccessMsg(msg);
+          showSuccess(msg);
         }
         localStorage.setItem("solid_batching_users_list", JSON.stringify(updatedList));
         setUsers(updatedList);
@@ -256,7 +268,9 @@ export function MaintenanceUsersPage() {
 
       close();
     } catch (err: any) {
-      setError(err.message || "Operation failed.");
+      const errTxt = err.message || "Operation failed.";
+      setError(errTxt);
+      showError(errTxt);
     } finally {
       setSubmitting(false);
     }
@@ -283,16 +297,22 @@ export function MaintenanceUsersPage() {
         } else if (rpcRes && rpcRes.success === false) {
           throw new Error(rpcRes.error || "Failed to delete user.");
         }
-        setSuccessMsg(`User ${user.email} removed.`);
+        const msg = `User ${user.email} removed successfully.`;
+        setSuccessMsg(msg);
+        showSuccess(msg);
         await loadUsers();
       } else {
         const updatedList = users.filter((u) => u.id !== user.id);
         localStorage.setItem("solid_batching_users_list", JSON.stringify(updatedList));
         setUsers(updatedList);
-        setSuccessMsg(`User ${user.email} removed (local).`);
+        const msg = `User ${user.email} removed (local).`;
+        setSuccessMsg(msg);
+        showSuccess(msg);
       }
     } catch (err: any) {
-      setError(err.message || "Failed to delete user.");
+      const errTxt = err.message || "Failed to delete user.";
+      setError(errTxt);
+      showError(errTxt);
     } finally {
       setLoading(false);
     }

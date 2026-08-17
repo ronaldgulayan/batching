@@ -6,18 +6,21 @@ import {
   Group,
   Loader,
   LoadingOverlay,
+  Modal,
   NumberInput,
   Paper,
+  Select,
   SimpleGrid,
   Stack,
   TextInput,
   Text,
 } from "@mantine/core";
-import { AlertCircle, RefreshCw, Save, Trash2, Edit3, X } from "lucide-react";
+import { AlertCircle, RefreshCw, Save, Trash2, Edit3, X, CreditCard } from "lucide-react";
 import { CustomExcelTable, type ExcelColumn } from "../components/CustomExcelTable";
 import { SuggestionTextInput } from "../components/SuggestionTextInput";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 import { DateShortcutInput } from "../components/DateShortcutInput";
+import { useSnackbar } from "../context/SnackbarContext";
 
 type SupplierRow = {
   id: string;
@@ -98,6 +101,7 @@ const columns: ExcelColumn<SupplierRow>[] = [
 ];
 
 export function SupplierTransactionsPage() {
+  const { showSuccess, showError } = useSnackbar();
   const [rows, setRows] = useState<SupplierRow[]>([]);
   const [suppliersOptions, setSuppliersOptions] = useState<string[]>([]);
   const [itemsOptions, setItemsOptions] = useState<string[]>([]);
@@ -107,25 +111,37 @@ export function SupplierTransactionsPage() {
   const [message, setMessage] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
 
+  // Single Pay Modal State
+  const [payModalOpen, setPayModalOpen] = useState(false);
+  const [payingTransaction, setPayingTransaction] = useState<SupplierRow | null>(null);
+  const [payForm, setPayForm] = useState({
+    payment_date: new Date().toISOString().slice(0, 10),
+    ck_number: "",
+    po_number: "",
+    remarks: "Paid",
+    amount: 0,
+  });
+
   const total = useMemo(
     () => Number(form.qty || 0) * Number(form.price || 0),
     [form.qty, form.price]
   );
 
-  // Auto-suggest supplier names from history
-  useEffect(() => {
-    const list = Array.from(new Set(rows.map((r) => r.supplier_name).filter(Boolean)));
-    setSuppliersOptions(list);
+  const filteredRows = useMemo(() => {
+    return rows;
   }, [rows]);
 
-  // Auto-suggest items entered under this supplier from history
-  useEffect(() => {
-    const matched = rows
-      .filter((r) => r.supplier_name.toLowerCase() === form.supplier_name.trim().toLowerCase())
-      .map((r) => r.item_name)
-      .filter(Boolean);
-    setItemsOptions(Array.from(new Set(matched)));
-  }, [form.supplier_name, rows]);
+  async function loadLookups() {
+    const [suppliersRes, itemsRes] = await Promise.all([
+      supabase.from("suppliers").select("name").order("name"),
+      supabase.from("supplier_items").select("item").order("item"),
+    ]);
+
+    if (suppliersRes.error) throw new Error(suppliersRes.error.message);
+
+    setSuppliersOptions((suppliersRes.data ?? []).map((s) => s.name));
+    setItemsOptions((itemsRes.data ?? []).map((i) => i.item));
+  }
 
   async function loadRows() {
     if (!isSupabaseConfigured) return;
@@ -134,17 +150,16 @@ export function SupplierTransactionsPage() {
     setMessage("");
 
     try {
+      await loadLookups();
       const { data, error: loadError } = await supabase
         .from("supplier_transactions")
-        .select(
-          "id,dr_number,transaction_date,supplier_name,item_name,qty,price,total_amount,payment_status,supplier_payments(ck_number,amount,payment_date,remarks,po_number)"
-        )
+        .select("id,dr_number,transaction_date,supplier_name,item_name,qty,price,total_amount,payment_status,supplier_payments(payment_date,amount,ck_number,po_number,remarks)")
         .order("dr_number", { ascending: false })
         .limit(300);
 
       if (loadError) throw new Error(loadError.message);
 
-      const records = (data ?? []) as unknown as SupplierRecord[];
+      const records = (data ?? []) as any[];
       setRows(
         records.map((r) => {
           const paymentsList = Array.isArray(r.supplier_payments)
@@ -220,13 +235,17 @@ export function SupplierTransactionsPage() {
       const { error: saveError } = await query;
       if (saveError) throw new Error(saveError.message);
 
-      setMessage(editingId ? `Updated DR ${drNumber}.` : `Saved DR ${drNumber}.`);
+      const successMsg = editingId ? `Updated DR ${drNumber}.` : `Saved DR ${drNumber}.`;
+      setMessage(successMsg);
+      showSuccess(successMsg);
       setEditingId(null);
       
       setForm(emptyForm);
       await loadRows();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Unable to save transaction.");
+      const errTxt = saveError instanceof Error ? saveError.message : "Unable to save transaction.";
+      setError(errTxt);
+      showError(errTxt);
     } finally {
       setLoading(false);
     }
@@ -267,14 +286,76 @@ export function SupplierTransactionsPage() {
 
     if (deleteError) {
       setError(deleteError.message);
+      showError(deleteError.message);
       return;
     }
 
-    setMessage("Record deleted successfully.");
+    const delMsg = "Record deleted successfully.";
+    setMessage(delMsg);
+    showSuccess(delMsg);
     if (editingId === row.id) {
       cancelEdit();
     }
     await loadRows();
+  }
+
+  function handlePayTransaction(row: SupplierRow) {
+    if (row.payment_status === "paid") {
+      showError(`DR ${row.dr_number} is already fully paid.`);
+      return;
+    }
+    const balance = row.total_amount - (row.amount || 0);
+    setPayingTransaction(row);
+    setPayForm({
+      payment_date: new Date().toISOString().slice(0, 10),
+      ck_number: "",
+      po_number: row.po_number || "",
+      remarks: "Paid",
+      amount: balance > 0 ? balance : row.total_amount,
+    });
+    setPayModalOpen(true);
+  }
+
+  async function submitSupplierPayment() {
+    if (!payingTransaction) return;
+    if (Number(payForm.amount) <= 0) {
+      showError("Payment amount must be greater than 0.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { error: insertErr } = await supabase.from("supplier_payments").insert({
+        supplier_transaction_id: payingTransaction.id,
+        payment_date: payForm.payment_date,
+        amount: Number(payForm.amount),
+        ck_number: payForm.ck_number.trim() || null,
+        po_number: payForm.po_number.trim() || null,
+        remarks: payForm.remarks.trim() || null,
+      });
+
+      if (insertErr) throw new Error(insertErr.message);
+
+      const nextPaidAmount = (payingTransaction.amount || 0) + Number(payForm.amount);
+      const nextStatus = nextPaidAmount >= payingTransaction.total_amount ? "paid" : "deposit";
+
+      const { error: updateErr } = await supabase
+        .from("supplier_transactions")
+        .update({ payment_status: nextStatus })
+        .eq("id", payingTransaction.id);
+
+      if (updateErr) throw new Error(updateErr.message);
+
+      const msg = `Payment of ₱${Number(payForm.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })} for Supplier DR ${payingTransaction.dr_number} saved successfully.`;
+      showSuccess(msg);
+      setPayModalOpen(false);
+      setPayingTransaction(null);
+      await loadRows();
+    } catch (err: any) {
+      showError(err.message || "Failed to record payment.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -381,8 +462,10 @@ export function SupplierTransactionsPage() {
       <CustomExcelTable
         columns={columns}
         data={rows}
+        onPayClick={(row) => handlePayTransaction(row)}
         onEditClick={(row) => startEdit(row)}
         onDeleteClick={(row) => deleteTransaction(row)}
+        contextMenuItems={["pay", "edit", "delete"]}
         renderRowActions={(row) => (
           <Group gap="xs" justify="center">
             <Button size="xs" variant="subtle" leftSection={<Edit3 size={14} />} onClick={() => startEdit(row)}>
@@ -404,6 +487,111 @@ export function SupplierTransactionsPage() {
           );
         }}
       />
+
+      {/* Pay Single Supplier Transaction Modal */}
+      <Modal
+        opened={payModalOpen}
+        onClose={() => {
+          setPayModalOpen(false);
+          setPayingTransaction(null);
+        }}
+        title={
+          <Group gap="xs">
+            <CreditCard size={18} color="#10b981" />
+            <Text fw={700} size="md">
+              Pay Supplier DR {payingTransaction?.dr_number}
+            </Text>
+          </Group>
+        }
+        size="md"
+        centered
+      >
+        {payingTransaction && (
+          <Stack gap="md">
+            <Paper p="sm" radius="xs" style={{ backgroundColor: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
+              <SimpleGrid cols={2} spacing="xs">
+                <div>
+                  <Text size="xs" c="dimmed">Supplier</Text>
+                  <Text size="sm" fw={600}>{payingTransaction.supplier_name}</Text>
+                </div>
+                <div>
+                  <Text size="xs" c="dimmed">Date</Text>
+                  <Text size="sm">{payingTransaction.transaction_date}</Text>
+                </div>
+                <div>
+                  <Text size="xs" c="dimmed">Item & Qty</Text>
+                  <Text size="sm">{payingTransaction.item_name} ({payingTransaction.qty} @ ₱{payingTransaction.price})</Text>
+                </div>
+                <div>
+                  <Text size="xs" c="dimmed">Total Amount</Text>
+                  <Text size="sm" fw={700} c="teal.4">₱{payingTransaction.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</Text>
+                </div>
+              </SimpleGrid>
+            </Paper>
+
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+              <DateShortcutInput
+                label="Payment Date"
+                value={payForm.payment_date}
+                onChange={(val) => setPayForm((p) => ({ ...p, payment_date: val }))}
+              />
+              <TextInput
+                label="CK Number (Optional)"
+                placeholder="Check number..."
+                value={payForm.ck_number}
+                onChange={(e) => setPayForm((p) => ({ ...p, ck_number: e.currentTarget.value }))}
+              />
+            </SimpleGrid>
+
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+              <TextInput
+                label="PO Number (Optional)"
+                placeholder="PO number..."
+                value={payForm.po_number}
+                onChange={(e) => setPayForm((p) => ({ ...p, po_number: e.currentTarget.value }))}
+              />
+              <NumberInput
+                label="Amount to Pay"
+                value={payForm.amount}
+                onChange={(val) => setPayForm((p) => ({ ...p, amount: Number(val || 0) }))}
+                min={0}
+                decimalScale={2}
+                thousandSeparator=","
+                prefix="₱ "
+                required
+              />
+            </SimpleGrid>
+
+            <TextInput
+              label="Remarks"
+              placeholder="e.g. Paid, Partial, Cash..."
+              value={payForm.remarks}
+              onChange={(e) => setPayForm((p) => ({ ...p, remarks: e.currentTarget.value }))}
+            />
+
+            <Group justify="flex-end" mt="md">
+              <Button
+                variant="light"
+                color="gray"
+                onClick={() => {
+                  setPayModalOpen(false);
+                  setPayingTransaction(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                color="teal"
+                leftSection={<CreditCard size={16} />}
+                onClick={submitSupplierPayment}
+                loading={loading}
+              >
+                Confirm Payment
+              </Button>
+            </Group>
+          </Stack>
+        )}
+      </Modal>
     </Stack>
   );
 }

@@ -18,6 +18,7 @@ import { AlertCircle, Edit3, RefreshCw, Save, Trash2, X } from "lucide-react";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 import { CustomExcelTable, type ExcelColumn } from "../components/CustomExcelTable";
 import { DateShortcutInput } from "../components/DateShortcutInput";
+import { useSnackbar } from "../context/SnackbarContext";
 
 type ExpenseRecord = {
   id: string;
@@ -35,6 +36,7 @@ const tableColumns: ExcelColumn<ExpenseRecord>[] = [
 ];
 
 export function ExpensesPurchasingPage() {
+  const { showSuccess, showError } = useSnackbar();
   const [rows, setRows] = useState<ExpenseRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -151,10 +153,13 @@ export function ExpensesPurchasingPage() {
 
     if (saveError) {
       setError(saveError.message);
+      showError(saveError.message);
       return;
     }
 
-    setMessage(editingId ? "Expense updated successfully." : "Expense saved successfully.");
+    const successMsg = editingId ? "Expense updated successfully." : "Expense saved successfully.";
+    setMessage(successMsg);
+    showSuccess(successMsg);
     resetForm();
     await loadExpenses();
   }
@@ -191,10 +196,13 @@ export function ExpensesPurchasingPage() {
 
     if (deleteError) {
       setError(deleteError.message);
+      showError(deleteError.message);
       return;
     }
 
-    setMessage("Expense deleted successfully.");
+    const delMsg = "Expense deleted successfully.";
+    setMessage(delMsg);
+    showSuccess(delMsg);
     if (editingId === row.id) {
       resetForm();
     }

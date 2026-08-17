@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ScrollArea, Modal, Table, Button, Checkbox } from "@mantine/core";
-import { Edit3, Trash2, Eye, Copy, Calendar, Check } from "lucide-react";
+import { Edit3, Trash2, Eye, Copy, Calendar, Check, CreditCard } from "lucide-react";
 import "./excel.css";
 
 type CellType = "text" | "number" | "date" | "autocomplete";
@@ -31,9 +31,10 @@ type Props<T extends { id: string | number }> = {
   onSelectionChange?: (selectedIds: Set<string | number>) => void;
   checkedRowIds?: Set<string | number>;
   onCheckedRowIdsChange?: (checkedIds: Set<string | number>) => void;
-  contextMenuItems?: readonly ("delete" | "edit" | "details" | "copy" | "counter_date" | "select_rows")[];
+  contextMenuItems?: readonly ("delete" | "edit" | "details" | "copy" | "counter_date" | "select_rows" | "pay")[];
   onEditClick?: (row: T, rowIndex: number) => void;
   onDeleteClick?: (row: T, rowIndex: number) => void;
+  onPayClick?: (row: T, rowIndex: number) => void;
   onCounterClick?: (row: T, selectedRows: T[]) => void;
   onSelectRowsClick?: (selectedRows: T[]) => void;
 };
@@ -58,6 +59,7 @@ export function CustomExcelTable<T extends { id: string | number }>({
   contextMenuItems: contextMenuItemsProp,
   onEditClick,
   onDeleteClick,
+  onPayClick,
   onCounterClick,
   onSelectRowsClick,
 }: Props<T>) {
@@ -132,9 +134,12 @@ export function CustomExcelTable<T extends { id: string | number }>({
     if (contextMenuItemsProp && contextMenuItemsProp.length === 0) {
       return [];
     }
-    const items = new Set<"edit" | "delete" | "details" | "copy" | "counter_date" | "select_rows">(["details", "copy"]);
+    const items = new Set<"edit" | "delete" | "details" | "copy" | "counter_date" | "select_rows" | "pay">(["details", "copy"]);
 
     if (contextMenuItemsProp) {
+      if (contextMenuItemsProp.includes("pay") && onPayClick) {
+        items.add("pay");
+      }
       if (contextMenuItemsProp.includes("edit") && onEditClick) {
         items.add("edit");
       }
@@ -148,6 +153,9 @@ export function CustomExcelTable<T extends { id: string | number }>({
         items.add("select_rows");
       }
     } else {
+      if (onPayClick) {
+        items.add("pay");
+      }
       if (onEditClick) {
         items.add("edit");
       }
@@ -156,7 +164,7 @@ export function CustomExcelTable<T extends { id: string | number }>({
       }
     }
     return Array.from(items);
-  }, [contextMenuItemsProp, onEditClick, onDeleteClick, onCounterClick, onSelectRowsClick]);
+  }, [contextMenuItemsProp, onEditClick, onDeleteClick, onPayClick, onCounterClick, onSelectRowsClick]);
 
   const startColResize = (event: React.MouseEvent, colIndex: number) => {
     event.preventDefault();
@@ -977,6 +985,19 @@ export function CustomExcelTable<T extends { id: string | number }>({
             }}
             onClick={(e) => e.stopPropagation()}
           >
+            {activeItems.includes("pay") && (
+              <button
+                type='button'
+                className='excel-context-menu-item'
+                onClick={() => {
+                  onPayClick?.(contextMenu.row, contextMenu.rowIndex);
+                  setContextMenu(null);
+                }}
+              >
+                <CreditCard size={14} className='excel-context-menu-icon' style={{ color: "#10b981" }} />
+                <span style={{ color: "#10b981", fontWeight: 600 }}>Pay</span>
+              </button>
+            )}
             {activeItems.includes("edit") && (
               <button
                 type='button'
@@ -1018,7 +1039,8 @@ export function CustomExcelTable<T extends { id: string | number }>({
               </button>
             )}
             {activeItems.includes("copy") &&
-              (activeItems.includes("edit") ||
+              (activeItems.includes("pay") ||
+                activeItems.includes("edit") ||
                 activeItems.includes("delete") ||
                 activeItems.includes("details")) && (
                 <div className='excel-context-menu-divider' />

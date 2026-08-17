@@ -6,18 +6,21 @@ import {
   Group,
   Loader,
   LoadingOverlay,
+  Modal,
   NumberInput,
   Paper,
+  Select,
   SimpleGrid,
   Stack,
   TextInput,
   Text,
 } from "@mantine/core";
-import { AlertCircle, RefreshCw, Save, Trash2, Edit3, X } from "lucide-react";
+import { AlertCircle, RefreshCw, Save, Trash2, Edit3, X, CreditCard } from "lucide-react";
 import { CustomExcelTable, type ExcelColumn } from "../components/CustomExcelTable";
 import { SuggestionTextInput } from "../components/SuggestionTextInput";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 import { DateShortcutInput } from "../components/DateShortcutInput";
+import { useSnackbar } from "../context/SnackbarContext";
 
 type Lookup = {
   id: string;
@@ -122,6 +125,7 @@ const relatedSupplier = (value: GrabaRecord["suppliers"]) =>
   Array.isArray(value) ? value[0]?.name : value?.name;
 
 export function GrabaPage() {
+  const { showSuccess, showError } = useSnackbar();
   const [rows, setRows] = useState<GrabaRow[]>([]);
   const [suppliers, setSuppliers] = useState<Lookup[]>([]);
   const [itemsOptions, setItemsOptions] = useState<{ item: string; price: number }[]>([]);
@@ -132,14 +136,34 @@ export function GrabaPage() {
   const [message, setMessage] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
 
+  // Single Pay Modal State
+  const [payModalOpen, setPayModalOpen] = useState(false);
+  const [payingGraba, setPayingGraba] = useState<GrabaRow | null>(null);
+  const [payForm, setPayForm] = useState({
+    payment_date: new Date().toISOString().slice(0, 10),
+    payment_method: "Cash",
+    amount: 0,
+    ck_number: "",
+  });
+
   const cubic = useMemo(
-    () =>
-      Number(form.length_value || 0) *
-      Number(form.width_value || 0) *
-      Number(form.height_value || 0),
-    [form.height_value, form.length_value, form.width_value],
+    () => {
+      const l = Number(form.length_value || 0);
+      const w = Number(form.width_value || 0);
+      const h = Number(form.height_value || 0);
+      if (!l || !w || !h) return 0;
+      return Math.round((l * w * h) * 100) / 100;
+    },
+    [form.length_value, form.width_value, form.height_value],
   );
-  const total = useMemo(() => cubic * Number(form.unit_price || 0), [cubic, form.unit_price]);
+
+  const total = useMemo(
+    () => {
+      const p = Number(form.unit_price || 0);
+      return Math.round(cubic * p * 100) / 100;
+    },
+    [cubic, form.unit_price],
+  );
 
   async function loadLookups() {
     const [suppliersRes, itemsRes, trucksRes] = await Promise.all([
@@ -288,13 +312,17 @@ export function GrabaPage() {
       const { error: saveError } = await query;
       if (saveError) throw new Error(saveError.message);
 
-      setMessage(editingId ? `Updated GRABA DR ${drNumber}.` : `Saved GRABA DR ${drNumber}.`);
+      const successMsg = editingId ? `Updated GRABA DR ${drNumber}.` : `Saved GRABA DR ${drNumber}.`;
+      setMessage(successMsg);
+      showSuccess(successMsg);
       setEditingId(null);
       
       setForm(emptyForm);
       await loadRows();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "Unable to save GRABA.");
+      const errTxt = saveError instanceof Error ? saveError.message : "Unable to save GRABA.";
+      setError(errTxt);
+      showError(errTxt);
     } finally {
       setLoading(false);
     }
@@ -338,14 +366,78 @@ export function GrabaPage() {
 
     if (deleteError) {
       setError(deleteError.message);
+      showError(deleteError.message);
       return;
     }
 
-    setMessage("GRABA record deleted successfully.");
+    const delMsg = "GRABA record deleted successfully.";
+    setMessage(delMsg);
+    showSuccess(delMsg);
     if (editingId === row.id) {
       cancelEdit();
     }
     await loadRows();
+  }
+
+  function handlePayGraba(row: GrabaRow) {
+    if (row.payment_status === "paid") {
+      showError(`DR ${row.graba_dr_number} is already fully paid.`);
+      return;
+    }
+    const balance = row.total_amount - (row.amount || 0);
+    setPayingGraba(row);
+    setPayForm({
+      payment_date: new Date().toISOString().slice(0, 10),
+      payment_method: "Cash",
+      amount: balance > 0 ? balance : row.total_amount,
+      ck_number: "",
+    });
+    setPayModalOpen(true);
+  }
+
+  async function submitGrabaPayment() {
+    if (!payingGraba) return;
+    if (Number(payForm.amount) <= 0) {
+      showError("Payment amount must be greater than 0.");
+      return;
+    }
+    if (payForm.payment_method === "CK" && !payForm.ck_number.trim()) {
+      showError("CK Number is required for Check payments.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { error: insertErr } = await supabase.from("graba_payments").insert({
+        graba_record_id: payingGraba.id,
+        payment_date: payForm.payment_date,
+        amount: Number(payForm.amount),
+        payment_method: payForm.payment_method,
+        reference_number: payForm.payment_method === "CK" ? payForm.ck_number.trim() : null,
+      });
+
+      if (insertErr) throw new Error(insertErr.message);
+
+      const nextPaidAmount = (payingGraba.amount || 0) + Number(payForm.amount);
+      const nextStatus = nextPaidAmount >= payingGraba.total_amount ? "paid" : "deposit";
+
+      const { error: updateErr } = await supabase
+        .from("graba_records")
+        .update({ payment_status: nextStatus })
+        .eq("id", payingGraba.id);
+
+      if (updateErr) throw new Error(updateErr.message);
+
+      const msg = `Payment of ₱${Number(payForm.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })} for GRABA DR ${payingGraba.graba_dr_number} saved successfully.`;
+      showSuccess(msg);
+      setPayModalOpen(false);
+      setPayingGraba(null);
+      await loadRows();
+    } catch (err: any) {
+      showError(err.message || "Failed to record payment.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -523,8 +615,10 @@ export function GrabaPage() {
       <CustomExcelTable
         columns={columns}
         data={rows}
+        onPayClick={(row) => handlePayGraba(row)}
         onEditClick={(row) => startEdit(row)}
         onDeleteClick={(row) => deleteGraba(row)}
+        contextMenuItems={["pay", "edit", "delete"]}
         renderRowActions={(row) => (
           <Group gap="xs" justify="center">
             <Button
@@ -557,6 +651,106 @@ export function GrabaPage() {
           );
         }}
       />
+
+      {/* Pay Single GRABA Modal */}
+      <Modal
+        opened={payModalOpen}
+        onClose={() => {
+          setPayModalOpen(false);
+          setPayingGraba(null);
+        }}
+        title={
+          <Group gap="xs">
+            <CreditCard size={18} color="#10b981" />
+            <Text fw={700} size="md">
+              Pay GRABA DR {payingGraba?.graba_dr_number}
+            </Text>
+          </Group>
+        }
+        size="md"
+        centered
+      >
+        {payingGraba && (
+          <Stack gap="md">
+            <Paper p="sm" radius="xs" style={{ backgroundColor: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
+              <SimpleGrid cols={2} spacing="xs">
+                <div>
+                  <Text size="xs" c="dimmed">Supplier</Text>
+                  <Text size="sm" fw={600}>{payingGraba.supplier_name}</Text>
+                </div>
+                <div>
+                  <Text size="xs" c="dimmed">Date</Text>
+                  <Text size="sm">{payingGraba.graba_date}</Text>
+                </div>
+                <div>
+                  <Text size="xs" c="dimmed">Items / Truck</Text>
+                  <Text size="sm">{payingGraba.items} {payingGraba.truck ? `(${payingGraba.truck})` : ""}</Text>
+                </div>
+                <div>
+                  <Text size="xs" c="dimmed">Total Amount</Text>
+                  <Text size="sm" fw={700} c="teal.4">₱{payingGraba.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</Text>
+                </div>
+              </SimpleGrid>
+            </Paper>
+
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+              <DateShortcutInput
+                label="Payment Date"
+                value={payForm.payment_date}
+                onChange={(val) => setPayForm((p) => ({ ...p, payment_date: val }))}
+              />
+              <Select
+                label="Payment Method"
+                data={["Cash", "CK", "Online", "Deposit"]}
+                value={payForm.payment_method}
+                onChange={(val) => setPayForm((p) => ({ ...p, payment_method: val || "Cash" }))}
+              />
+            </SimpleGrid>
+
+            {payForm.payment_method === "CK" && (
+              <TextInput
+                label="CK Number"
+                placeholder="Check number..."
+                value={payForm.ck_number}
+                onChange={(e) => setPayForm((p) => ({ ...p, ck_number: e.currentTarget.value }))}
+                required
+              />
+            )}
+
+            <NumberInput
+              label="Amount to Pay"
+              value={payForm.amount}
+              onChange={(val) => setPayForm((p) => ({ ...p, amount: Number(val || 0) }))}
+              min={0}
+              decimalScale={2}
+              thousandSeparator=","
+              prefix="₱ "
+              required
+            />
+
+            <Group justify="flex-end" mt="md">
+              <Button
+                variant="light"
+                color="gray"
+                onClick={() => {
+                  setPayModalOpen(false);
+                  setPayingGraba(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                color="teal"
+                leftSection={<CreditCard size={16} />}
+                onClick={submitGrabaPayment}
+                loading={loading}
+              >
+                Confirm Payment
+              </Button>
+            </Group>
+          </Stack>
+        )}
+      </Modal>
     </Stack>
   );
 }

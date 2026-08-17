@@ -16,11 +16,12 @@ import {
   SegmentedControl,
   MultiSelect,
 } from "@mantine/core";
-import { AlertCircle, Edit3, RefreshCw, Save, Trash2, X } from "lucide-react";
+import { AlertCircle, Edit3, RefreshCw, Save, Trash2, X, Filter, Calendar } from "lucide-react";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 import { CustomExcelTable, type ExcelColumn } from "../components/CustomExcelTable";
 import { DateShortcutInput } from "../components/DateShortcutInput";
 import { SuggestionTextInput } from "../components/SuggestionTextInput";
+import { useSnackbar } from "../context/SnackbarContext";
 
 type PaymentMethod = "Cash" | "CK" | "Online" | "Deposit" | "CASH" | "ONLINE" | "DEPOSIT";
 
@@ -92,11 +93,24 @@ type PaidSupplier = PayableSupplier & {
   payment_amount: number;
   ck_number: string;
   po_number: string;
-  remarks: "Paid" | "Collect";
+  remarks: string;
 };
 
-type PaymentDraft = {
-  selected: boolean;
+type SalesPerson = {
+  id: string;
+  label: string;
+};
+
+type PaymentForm = {
+  payment_date: string;
+  payment_method: PaymentMethod;
+  sales_person: string;
+  ck_number: string;
+  edit_amount: number | "";
+  total_amount_paid: number | "";
+  term: string;
+  remarks: string;
+  po_number: string;
 };
 
 type SalesPaymentRecord = {
@@ -129,27 +143,8 @@ type SupplierPaymentRecord = {
   remarks: string | null;
 };
 
-type SalesPerson = {
-  id: string;
-  label: string;
-};
-
-type PaymentForm = {
-  payment_date: string;
-  payment_method: PaymentMethod;
-  sales_person: string;
-  ck_number: string;
-  edit_amount: number | "";
-  total_amount_paid: number | "";
-  term: string;
-  remarks: string;
-  po_number: string;
-};
-
-const today = () => new Date().toISOString().slice(0, 10);
-
 const emptyForm: PaymentForm = {
-  payment_date: today(),
+  payment_date: new Date().toISOString().slice(0, 10),
   payment_method: "Cash",
   sales_person: "",
   ck_number: "",
@@ -191,6 +186,7 @@ function remarkValue(remarks: string | null, label: string) {
 }
 
 export function PaymentsPage() {
+  const { showSuccess, showError } = useSnackbar();
   const [activeTab, setActiveTab] = useState<"sales" | "graba" | "supplier">("sales");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -219,7 +215,14 @@ export function PaymentsPage() {
   const [unpaidSearch, setUnpaidSearch] = useState("");
   const [selectedUnpaidDates, setSelectedUnpaidDates] = useState<string[]>([]);
   const [selectedUnpaidClients, setSelectedUnpaidClients] = useState<string[]>([]);
+  const [unpaidFromDate, setUnpaidFromDate] = useState("");
+  const [unpaidToDate, setUnpaidToDate] = useState("");
+  const [unpaidFromDr, setUnpaidFromDr] = useState("");
+  const [unpaidToDr, setUnpaidToDr] = useState("");
+
   const [paidSearch, setPaidSearch] = useState("");
+  const [paidFromDate, setPaidFromDate] = useState("");
+  const [paidToDate, setPaidToDate] = useState("");
 
   // Graba State
   const [payableGraba, setPayableGraba] = useState<PayableGraba[]>([]);
@@ -233,7 +236,14 @@ export function PaymentsPage() {
     paidAmount: number;
   } | null>(null);
   const [unpaidGrabaSearch, setUnpaidGrabaSearch] = useState("");
+  const [unpaidGrabaFromDate, setUnpaidGrabaFromDate] = useState("");
+  const [unpaidGrabaToDate, setUnpaidGrabaToDate] = useState("");
+  const [unpaidGrabaFromDr, setUnpaidGrabaFromDr] = useState("");
+  const [unpaidGrabaToDr, setUnpaidGrabaToDr] = useState("");
+
   const [paidGrabaSearch, setPaidGrabaSearch] = useState("");
+  const [paidGrabaFromDate, setPaidGrabaFromDate] = useState("");
+  const [paidGrabaToDate, setPaidGrabaToDate] = useState("");
 
   // Supplier State
   const [payableSupplier, setPayableSupplier] = useState<PayableSupplier[]>([]);
@@ -247,7 +257,14 @@ export function PaymentsPage() {
     paidAmount: number;
   } | null>(null);
   const [unpaidSupplierSearch, setUnpaidSupplierSearch] = useState("");
+  const [unpaidSupplierFromDate, setUnpaidSupplierFromDate] = useState("");
+  const [unpaidSupplierToDate, setUnpaidSupplierToDate] = useState("");
+  const [unpaidSupplierFromDr, setUnpaidSupplierFromDr] = useState("");
+  const [unpaidSupplierToDr, setUnpaidSupplierToDr] = useState("");
+
   const [paidSupplierSearch, setPaidSupplierSearch] = useState("");
+  const [paidSupplierFromDate, setPaidSupplierFromDate] = useState("");
+  const [paidSupplierToDate, setPaidSupplierToDate] = useState("");
 
   // Graba derivations
   const selectedGrabaDrafts = useMemo(
@@ -277,6 +294,7 @@ export function PaymentsPage() {
     const paidDetail = sale as Partial<PaidSale>;
 
     return [
+      `DR ${sale.sale_or_number}`,
       `OR ${sale.sale_or_number}`,
       sale.sale_or_number,
       sale.sale_date,
@@ -381,22 +399,53 @@ export function PaymentsPage() {
     return Array.from(clientsSet).sort();
   }, [payableSales]);
 
-  const filteredPayableSales = useMemo(
-    () =>
-      payableSales.filter((sale) => {
-        const matchesSearch = saleMatchesSearch(sale, unpaidSearch);
-        const matchesDate =
-          selectedUnpaidDates.length === 0 || selectedUnpaidDates.includes(sale.sale_date);
-        const matchesClient =
-          selectedUnpaidClients.length === 0 || selectedUnpaidClients.includes(sale.customer_name);
-        return matchesSearch && matchesDate && matchesClient;
-      }),
-    [payableSales, unpaidSearch, selectedUnpaidDates, selectedUnpaidClients]
-  );
+  const filteredPayableSales = useMemo(() => {
+    return payableSales.filter((sale) => {
+      const matchesSearch = saleMatchesSearch(sale, unpaidSearch);
+      const matchesDate =
+        selectedUnpaidDates.length === 0 || selectedUnpaidDates.includes(sale.sale_date);
+      const matchesClient =
+        selectedUnpaidClients.length === 0 || selectedUnpaidClients.includes(sale.customer_name);
+
+      const matchesFromDate = !unpaidFromDate || sale.sale_date >= unpaidFromDate;
+      const matchesToDate = !unpaidToDate || sale.sale_date <= unpaidToDate;
+
+      const drNum = Number(sale.sale_or_number || 0);
+      const matchesFromDr = !unpaidFromDr || drNum >= Number(unpaidFromDr);
+      const matchesToDr = !unpaidToDr || drNum <= Number(unpaidToDr);
+
+      return (
+        matchesSearch &&
+        matchesDate &&
+        matchesClient &&
+        matchesFromDate &&
+        matchesToDate &&
+        matchesFromDr &&
+        matchesToDr
+      );
+    });
+  }, [
+    payableSales,
+    unpaidSearch,
+    selectedUnpaidDates,
+    selectedUnpaidClients,
+    unpaidFromDate,
+    unpaidToDate,
+    unpaidFromDr,
+    unpaidToDr,
+  ]);
 
   useEffect(() => {
     setSelectedUnpaidRowIds(new Set());
-  }, [selectedUnpaidDates, selectedUnpaidClients, unpaidSearch]);
+  }, [
+    selectedUnpaidDates,
+    selectedUnpaidClients,
+    unpaidSearch,
+    unpaidFromDate,
+    unpaidToDate,
+    unpaidFromDr,
+    unpaidToDr,
+  ]);
 
   const handleSelectAllUnpaidSales = () => {
     setSelectedUnpaidRowIds(new Set(filteredPayableSales.map((s) => s.id)));
@@ -442,34 +491,74 @@ export function PaymentsPage() {
     }
   }, [selectedBalanceTotal, activeTab, editingPayment]);
 
-  const filteredPaidSales = useMemo(
-    () => paidSales.filter((sale) => saleMatchesSearch(sale, paidSearch)),
-    [paidSales, paidSearch]
-  );
+  const filteredPaidSales = useMemo(() => {
+    return paidSales.filter((sale) => {
+      const matchesSearch = saleMatchesSearch(sale, paidSearch);
+      const matchesFromDate = !paidFromDate || sale.payment_date >= paidFromDate;
+      const matchesToDate = !paidToDate || sale.payment_date <= paidToDate;
+      return matchesSearch && matchesFromDate && matchesToDate;
+    });
+  }, [paidSales, paidSearch, paidFromDate, paidToDate]);
 
-  const filteredPayableGraba = useMemo(
-    () => payableGraba.filter((g) => grabaMatchesSearch(g, unpaidGrabaSearch)),
-    [payableGraba, unpaidGrabaSearch]
-  );
+  const filteredPayableGraba = useMemo(() => {
+    return payableGraba.filter((g) => {
+      const matchesSearch = grabaMatchesSearch(g, unpaidGrabaSearch);
+      const matchesFromDate = !unpaidGrabaFromDate || g.graba_date >= unpaidGrabaFromDate;
+      const matchesToDate = !unpaidGrabaToDate || g.graba_date <= unpaidGrabaToDate;
+      const drNum = Number(g.graba_dr_number || 0);
+      const matchesFromDr = !unpaidGrabaFromDr || (drNum > 0 && drNum >= Number(unpaidGrabaFromDr));
+      const matchesToDr = !unpaidGrabaToDr || (drNum > 0 && drNum <= Number(unpaidGrabaToDr));
+      return matchesSearch && matchesFromDate && matchesToDate && matchesFromDr && matchesToDr;
+    });
+  }, [
+    payableGraba,
+    unpaidGrabaSearch,
+    unpaidGrabaFromDate,
+    unpaidGrabaToDate,
+    unpaidGrabaFromDr,
+    unpaidGrabaToDr,
+  ]);
 
-  const filteredPaidGraba = useMemo(
-    () => paidGraba.filter((g) => grabaMatchesSearch(g, paidGrabaSearch)),
-    [paidGraba, paidGrabaSearch]
-  );
+  const filteredPaidGraba = useMemo(() => {
+    return paidGraba.filter((g) => {
+      const matchesSearch = grabaMatchesSearch(g, paidGrabaSearch);
+      const matchesFromDate = !paidGrabaFromDate || g.payment_date >= paidGrabaFromDate;
+      const matchesToDate = !paidGrabaToDate || g.payment_date <= paidGrabaToDate;
+      return matchesSearch && matchesFromDate && matchesToDate;
+    });
+  }, [paidGraba, paidGrabaSearch, paidGrabaFromDate, paidGrabaToDate]);
 
-  const filteredPayableSupplier = useMemo(
-    () => payableSupplier.filter((s) => supplierMatchesSearch(s, unpaidSupplierSearch)),
-    [payableSupplier, unpaidSupplierSearch]
-  );
+  const filteredPayableSupplier = useMemo(() => {
+    return payableSupplier.filter((s) => {
+      const matchesSearch = supplierMatchesSearch(s, unpaidSupplierSearch);
+      const matchesFromDate = !unpaidSupplierFromDate || s.transaction_date >= unpaidSupplierFromDate;
+      const matchesToDate = !unpaidSupplierToDate || s.transaction_date <= unpaidSupplierToDate;
+      const drNum = Number(s.dr_number || 0);
+      const matchesFromDr = !unpaidSupplierFromDr || (drNum > 0 && drNum >= Number(unpaidSupplierFromDr));
+      const matchesToDr = !unpaidSupplierToDr || (drNum > 0 && drNum <= Number(unpaidSupplierToDr));
+      return matchesSearch && matchesFromDate && matchesToDate && matchesFromDr && matchesToDr;
+    });
+  }, [
+    payableSupplier,
+    unpaidSupplierSearch,
+    unpaidSupplierFromDate,
+    unpaidSupplierToDate,
+    unpaidSupplierFromDr,
+    unpaidSupplierToDr,
+  ]);
 
-  const filteredPaidSupplier = useMemo(
-    () => paidSupplier.filter((s) => supplierMatchesSearch(s, paidSupplierSearch)),
-    [paidSupplier, paidSupplierSearch]
-  );
+  const filteredPaidSupplier = useMemo(() => {
+    return paidSupplier.filter((s) => {
+      const matchesSearch = supplierMatchesSearch(s, paidSupplierSearch);
+      const matchesFromDate = !paidSupplierFromDate || s.payment_date >= paidSupplierFromDate;
+      const matchesToDate = !paidSupplierToDate || s.payment_date <= paidSupplierToDate;
+      return matchesSearch && matchesFromDate && matchesToDate;
+    });
+  }, [paidSupplier, paidSupplierSearch, paidSupplierFromDate, paidSupplierToDate]);
 
   const unpaidColumns = useMemo<ExcelColumn<PayableSale>[]>(
     () => [
-      { key: "sale_or_number", label: "OR", type: "text", width: 90 },
+      { key: "sale_or_number", label: "DR No", type: "text", width: 90 },
       { key: "sale_date", label: "Date", type: "date", width: 110 },
       { key: "customer_name", label: "Client Name", width: 200 },
       { key: "project_site", label: "Site", width: 150 },
@@ -478,13 +567,15 @@ export function PaymentsPage() {
       { key: "unit_price", label: "Price", type: "number", width: 110 },
       { key: "pumpcrete", label: "Pumpcrete", type: "number", width: 110 },
       { key: "total_amount", label: "Total Amount", type: "number", width: 140 },
+      { key: "paid_amount", label: "Paid", type: "number", width: 120 },
+      { key: "balance_amount", label: "Balance", type: "number", width: 130 },
     ],
     []
   );
 
   const paidColumns = useMemo<ExcelColumn<PaidSale>[]>(
     () => [
-      { key: "sale_or_number", label: "OR", type: "text", width: 90 },
+      { key: "sale_or_number", label: "DR No", type: "text", width: 90 },
       { key: "sale_date", label: "Date", type: "date", width: 110 },
       { key: "customer_name", label: "Client Name", width: 180 },
       { key: "project_site", label: "Site", width: 150 },
@@ -867,9 +958,12 @@ export function PaymentsPage() {
       if (statusError) throw new Error(statusError.message);
 
       setMessage("Payment deleted successfully.");
+      showSuccess("Payment deleted successfully.");
       await loadRows();
     } catch (err: any) {
-      setError(err.message || "Failed to delete payment.");
+      const errTxt = err.message || "Failed to delete payment.";
+      setError(errTxt);
+      showError(errTxt);
     } finally {
       setLoading(false);
     }
@@ -897,9 +991,12 @@ export function PaymentsPage() {
       if (statusError) throw new Error(statusError.message);
 
       setMessage("Payment deleted successfully.");
+      showSuccess("Payment deleted successfully.");
       await loadRows();
     } catch (err: any) {
-      setError(err.message || "Failed to delete payment.");
+      const errTxt = err.message || "Failed to delete payment.";
+      setError(errTxt);
+      showError(errTxt);
     } finally {
       setLoading(false);
     }
@@ -927,9 +1024,12 @@ export function PaymentsPage() {
       if (statusError) throw new Error(statusError.message);
 
       setMessage("Payment deleted successfully.");
+      showSuccess("Payment deleted successfully.");
       await loadRows();
     } catch (err: any) {
-      setError(err.message || "Failed to delete payment.");
+      const errTxt = err.message || "Failed to delete payment.";
+      setError(errTxt);
+      showError(errTxt);
     } finally {
       setLoading(false);
     }
@@ -990,7 +1090,7 @@ export function PaymentsPage() {
     if (hasFieldError) return;
 
     if (!editingPayment && selectedDrafts.length === 0) {
-      setError("Select at least one OR to pay.");
+      setError("Select at least one DR to pay.");
       return;
     }
     if (!editingPayment && Number(form.total_amount_paid || 0) <= 0) {
@@ -1025,7 +1125,9 @@ export function PaymentsPage() {
           .eq("id", editingPayment.saleId);
         if (statusError) throw new Error(statusError.message);
 
-        setMessage("Payment updated successfully.");
+        const updateMsg = "Payment updated successfully.";
+        setMessage(updateMsg);
+        showSuccess(updateMsg);
         setEditingPayment(null);
         setForm(emptyForm);
         await loadRows();
@@ -1100,13 +1202,17 @@ export function PaymentsPage() {
           }
         }
 
-        setMessage("Payments saved successfully.");
+        const successMsg = "Payments saved successfully.";
+        setMessage(successMsg);
+        showSuccess(successMsg);
         setSelectedUnpaidRowIds(new Set());
         setForm(emptyForm);
         await loadRows();
       }
     } catch (err: any) {
-      setError(err.message || "Failed to save payments.");
+      const errTxt = err.message || "Failed to save payments.";
+      setError(errTxt);
+      showError(errTxt);
     } finally {
       setLoading(false);
     }
@@ -1173,7 +1279,9 @@ export function PaymentsPage() {
           .eq("id", editingGrabaPayment.grabaRecordId);
         if (statusError) throw new Error(statusError.message);
 
-        setMessage("Graba payment updated successfully.");
+        const updateMsg = "Graba payment updated successfully.";
+        setMessage(updateMsg);
+        showSuccess(updateMsg);
         setEditingGrabaPayment(null);
         setForm(emptyForm);
         await loadRows();
@@ -1221,13 +1329,17 @@ export function PaymentsPage() {
           await supabase.from("graba_records").update({ payment_status: update.status }).eq("id", update.id);
         }
 
-        setMessage("Graba payments saved successfully.");
+        const successMsg = "Graba payments saved successfully.";
+        setMessage(successMsg);
+        showSuccess(successMsg);
         setSelectedUnpaidGrabaRowIds(new Set());
         setForm(emptyForm);
         await loadRows();
       }
     } catch (err: any) {
-      setError(err.message || "Failed to save Graba payments.");
+      const errTxt = err.message || "Failed to save Graba payments.";
+      setError(errTxt);
+      showError(errTxt);
     } finally {
       setLoading(false);
     }
@@ -1289,7 +1401,9 @@ export function PaymentsPage() {
           .eq("id", editingSupplierPayment.supplierTransactionId);
         if (statusError) throw new Error(statusError.message);
 
-        setMessage("Payment updated successfully.");
+        const updateMsg = "Payment updated successfully.";
+        setMessage(updateMsg);
+        showSuccess(updateMsg);
         setEditingSupplierPayment(null);
         setForm(emptyForm);
         await loadRows();
@@ -1337,16 +1451,56 @@ export function PaymentsPage() {
           await supabase.from("supplier_transactions").update({ payment_status: update.status }).eq("id", update.id);
         }
 
-        setMessage("Supplier payments saved successfully.");
+        const successMsg = "Supplier payments saved successfully.";
+        setMessage(successMsg);
+        showSuccess(successMsg);
         setSelectedUnpaidSupplierRowIds(new Set());
         setForm(emptyForm);
         await loadRows();
       }
     } catch (err: any) {
-      setError(err.message || "Failed to save payments.");
+      const errTxt = err.message || "Failed to save payments.";
+      setError(errTxt);
+      showError(errTxt);
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleSinglePaySales(row: PayableSale) {
+    setSelectedUnpaidRowIds(new Set([row.id]));
+    setEditingPayment(null);
+    setForm((prev) => ({
+      ...prev,
+      total_amount_paid: row.balance_amount,
+      edit_amount: "",
+    }));
+    showSuccess(`Selected DR No. ${row.sale_or_number} for payment (Balance: ${displayMoney(row.balance_amount)}).`);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function handleSinglePayGraba(row: PayableGraba) {
+    setSelectedUnpaidGrabaRowIds(new Set([row.id]));
+    setEditingGrabaPayment(null);
+    setForm((prev) => ({
+      ...prev,
+      total_amount_paid: row.balance_amount,
+      edit_amount: "",
+    }));
+    showSuccess(`Selected GRABA DR ${row.graba_dr_number} for payment (Balance: ${displayMoney(row.balance_amount)}).`);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function handleSinglePaySupplier(row: PayableSupplier) {
+    setSelectedUnpaidSupplierRowIds(new Set([row.id]));
+    setEditingSupplierPayment(null);
+    setForm((prev) => ({
+      ...prev,
+      total_amount_paid: row.balance_amount,
+      edit_amount: "",
+    }));
+    showSuccess(`Selected Supplier DR ${row.dr_number} for payment (Balance: ${displayMoney(row.balance_amount)}).`);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   function handleUnpaidSelectionChange(nextSelected: Set<string | number>) {
@@ -1658,7 +1812,7 @@ export function PaymentsPage() {
           <Stack gap="xs">
             <Group justify="space-between" align="center" wrap="wrap" gap="xs">
               <Group gap="xs">
-                <Text size="lg" fw={600}>Unpaid OR Transactions</Text>
+                <Text size="lg" fw={600}>Unpaid DR Transactions</Text>
                 <Button
                   size="xs"
                   variant="light"
@@ -1679,33 +1833,65 @@ export function PaymentsPage() {
                   </Button>
                 )}
               </Group>
-              <Group gap="xs">
+              <Group gap="xs" wrap="wrap">
                 <MultiSelect
-                  placeholder="Filter by Client(s)..."
+                  placeholder="Filter Client(s)..."
                   data={availableUnpaidClients}
                   value={selectedUnpaidClients}
                   onChange={setSelectedUnpaidClients}
                   clearable
                   searchable
                   checkIconPosition="right"
-                  style={{ minWidth: 200 }}
+                  style={{ width: 170 }}
                 />
-                <MultiSelect
-                  placeholder="Filter by Date(s)..."
-                  data={availableUnpaidDates}
-                  value={selectedUnpaidDates}
-                  onChange={setSelectedUnpaidDates}
-                  clearable
-                  searchable
-                  checkIconPosition="right"
-                  style={{ minWidth: 180 }}
+                <DateShortcutInput
+                  placeholder="From Date"
+                  value={unpaidFromDate}
+                  onChange={setUnpaidFromDate}
+                  style={{ width: 120 }}
+                />
+                <DateShortcutInput
+                  placeholder="To Date"
+                  value={unpaidToDate}
+                  onChange={setUnpaidToDate}
+                  style={{ width: 120 }}
+                />
+                <TextInput
+                  placeholder="From DR"
+                  value={unpaidFromDr}
+                  onChange={(e) => setUnpaidFromDr(e.currentTarget.value)}
+                  style={{ width: 90 }}
+                />
+                <TextInput
+                  placeholder="To DR"
+                  value={unpaidToDr}
+                  onChange={(e) => setUnpaidToDr(e.currentTarget.value)}
+                  style={{ width: 90 }}
                 />
                 <TextInput
                   placeholder="Search..."
                   value={unpaidSearch}
                   onChange={(e) => setUnpaidSearch(e.currentTarget.value)}
-                  style={{ width: 160 }}
+                  style={{ width: 130 }}
                 />
+                {(unpaidFromDate || unpaidToDate || unpaidFromDr || unpaidToDr || selectedUnpaidClients.length > 0 || unpaidSearch) && (
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="red"
+                    leftSection={<X size={12} />}
+                    onClick={() => {
+                      setUnpaidFromDate("");
+                      setUnpaidToDate("");
+                      setUnpaidFromDr("");
+                      setUnpaidToDr("");
+                      setSelectedUnpaidClients([]);
+                      setUnpaidSearch("");
+                    }}
+                  >
+                    Reset
+                  </Button>
+                )}
               </Group>
             </Group>
             <CustomExcelTable
@@ -1714,19 +1900,50 @@ export function PaymentsPage() {
               withSelection
               checkedRowIds={selectedUnpaidRowIds}
               onCheckedRowIdsChange={handleUnpaidSelectionChange}
+              contextMenuItems={["pay", "details"]}
+              onPayClick={(row) => handleSinglePaySales(row)}
               renderCell={renderUnpaidCell}
             />
           </Stack>
 
           <Stack gap="xs">
-            <Group justify="space-between">
+            <Group justify="space-between" align="center" wrap="wrap" gap="xs">
               <Text size="lg" fw={600}>Paid History</Text>
-              <TextInput
-                placeholder="Search Client..."
-                value={paidSearch}
-                onChange={(e) => setPaidSearch(e.currentTarget.value)}
-                style={{ width: 220 }}
-              />
+              <Group gap="xs" wrap="wrap">
+                <DateShortcutInput
+                  placeholder="From Date"
+                  value={paidFromDate}
+                  onChange={setPaidFromDate}
+                  style={{ width: 120 }}
+                />
+                <DateShortcutInput
+                  placeholder="To Date"
+                  value={paidToDate}
+                  onChange={setPaidToDate}
+                  style={{ width: 120 }}
+                />
+                <TextInput
+                  placeholder="Search Client..."
+                  value={paidSearch}
+                  onChange={(e) => setPaidSearch(e.currentTarget.value)}
+                  style={{ width: 180 }}
+                />
+                {(paidFromDate || paidToDate || paidSearch) && (
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="red"
+                    leftSection={<X size={12} />}
+                    onClick={() => {
+                      setPaidFromDate("");
+                      setPaidToDate("");
+                      setPaidSearch("");
+                    }}
+                  >
+                    Reset
+                  </Button>
+                )}
+              </Group>
             </Group>
             <CustomExcelTable
               columns={paidColumns}
@@ -1785,12 +2002,55 @@ export function PaymentsPage() {
                   </Button>
                 )}
               </Group>
-              <TextInput
-                placeholder="Search Supplier/DR..."
-                value={unpaidGrabaSearch}
-                onChange={(e) => setUnpaidGrabaSearch(e.currentTarget.value)}
-                style={{ width: 220 }}
-              />
+              <Group gap="xs" wrap="wrap">
+                <DateShortcutInput
+                  placeholder="From Date"
+                  value={unpaidGrabaFromDate}
+                  onChange={setUnpaidGrabaFromDate}
+                  style={{ width: 120 }}
+                />
+                <DateShortcutInput
+                  placeholder="To Date"
+                  value={unpaidGrabaToDate}
+                  onChange={setUnpaidGrabaToDate}
+                  style={{ width: 120 }}
+                />
+                <TextInput
+                  placeholder="From DR"
+                  value={unpaidGrabaFromDr}
+                  onChange={(e) => setUnpaidGrabaFromDr(e.currentTarget.value)}
+                  style={{ width: 90 }}
+                />
+                <TextInput
+                  placeholder="To DR"
+                  value={unpaidGrabaToDr}
+                  onChange={(e) => setUnpaidGrabaToDr(e.currentTarget.value)}
+                  style={{ width: 90 }}
+                />
+                <TextInput
+                  placeholder="Search Supplier/DR..."
+                  value={unpaidGrabaSearch}
+                  onChange={(e) => setUnpaidGrabaSearch(e.currentTarget.value)}
+                  style={{ width: 170 }}
+                />
+                {(unpaidGrabaFromDate || unpaidGrabaToDate || unpaidGrabaFromDr || unpaidGrabaToDr || unpaidGrabaSearch) && (
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="red"
+                    leftSection={<X size={12} />}
+                    onClick={() => {
+                      setUnpaidGrabaFromDate("");
+                      setUnpaidGrabaToDate("");
+                      setUnpaidGrabaFromDr("");
+                      setUnpaidGrabaToDr("");
+                      setUnpaidGrabaSearch("");
+                    }}
+                  >
+                    Reset
+                  </Button>
+                )}
+              </Group>
             </Group>
             <CustomExcelTable
               columns={unpaidGrabaColumns}
@@ -1798,19 +2058,50 @@ export function PaymentsPage() {
               withSelection
               checkedRowIds={selectedUnpaidGrabaRowIds}
               onCheckedRowIdsChange={handleUnpaidGrabaSelectionChange}
+              contextMenuItems={["pay", "details"]}
+              onPayClick={(row) => handleSinglePayGraba(row)}
               renderCell={renderUnpaidGrabaCell}
             />
           </Stack>
 
           <Stack gap="xs">
-            <Group justify="space-between">
+            <Group justify="space-between" align="center" wrap="wrap" gap="xs">
               <Text size="lg" fw={600}>Paid History</Text>
-              <TextInput
-                placeholder="Search Supplier/DR..."
-                value={paidGrabaSearch}
-                onChange={(e) => setPaidGrabaSearch(e.currentTarget.value)}
-                style={{ width: 220 }}
-              />
+              <Group gap="xs" wrap="wrap">
+                <DateShortcutInput
+                  placeholder="From Date"
+                  value={paidGrabaFromDate}
+                  onChange={setPaidGrabaFromDate}
+                  style={{ width: 120 }}
+                />
+                <DateShortcutInput
+                  placeholder="To Date"
+                  value={paidGrabaToDate}
+                  onChange={setPaidGrabaToDate}
+                  style={{ width: 120 }}
+                />
+                <TextInput
+                  placeholder="Search Supplier/DR..."
+                  value={paidGrabaSearch}
+                  onChange={(e) => setPaidGrabaSearch(e.currentTarget.value)}
+                  style={{ width: 180 }}
+                />
+                {(paidGrabaFromDate || paidGrabaToDate || paidGrabaSearch) && (
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="red"
+                    leftSection={<X size={12} />}
+                    onClick={() => {
+                      setPaidGrabaFromDate("");
+                      setPaidGrabaToDate("");
+                      setPaidGrabaSearch("");
+                    }}
+                  >
+                    Reset
+                  </Button>
+                )}
+              </Group>
             </Group>
             <CustomExcelTable
               columns={paidGrabaColumns}
@@ -1870,12 +2161,55 @@ export function PaymentsPage() {
                   </Button>
                 )}
               </Group>
-              <TextInput
-                placeholder="Search Supplier/DR..."
-                value={unpaidSupplierSearch}
-                onChange={(e) => setUnpaidSupplierSearch(e.currentTarget.value)}
-                style={{ width: 220 }}
-              />
+              <Group gap="xs" wrap="wrap">
+                <DateShortcutInput
+                  placeholder="From Date"
+                  value={unpaidSupplierFromDate}
+                  onChange={setUnpaidSupplierFromDate}
+                  style={{ width: 120 }}
+                />
+                <DateShortcutInput
+                  placeholder="To Date"
+                  value={unpaidSupplierToDate}
+                  onChange={setUnpaidSupplierToDate}
+                  style={{ width: 120 }}
+                />
+                <TextInput
+                  placeholder="From DR"
+                  value={unpaidSupplierFromDr}
+                  onChange={(e) => setUnpaidSupplierFromDr(e.currentTarget.value)}
+                  style={{ width: 90 }}
+                />
+                <TextInput
+                  placeholder="To DR"
+                  value={unpaidSupplierToDr}
+                  onChange={(e) => setUnpaidSupplierToDr(e.currentTarget.value)}
+                  style={{ width: 90 }}
+                />
+                <TextInput
+                  placeholder="Search Supplier/DR..."
+                  value={unpaidSupplierSearch}
+                  onChange={(e) => setUnpaidSupplierSearch(e.currentTarget.value)}
+                  style={{ width: 170 }}
+                />
+                {(unpaidSupplierFromDate || unpaidSupplierToDate || unpaidSupplierFromDr || unpaidSupplierToDr || unpaidSupplierSearch) && (
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="red"
+                    leftSection={<X size={12} />}
+                    onClick={() => {
+                      setUnpaidSupplierFromDate("");
+                      setUnpaidSupplierToDate("");
+                      setUnpaidSupplierFromDr("");
+                      setUnpaidSupplierToDr("");
+                      setUnpaidSupplierSearch("");
+                    }}
+                  >
+                    Reset
+                  </Button>
+                )}
+              </Group>
             </Group>
             <CustomExcelTable
               columns={unpaidSupplierColumns}
@@ -1883,6 +2217,8 @@ export function PaymentsPage() {
               withSelection
               checkedRowIds={selectedUnpaidSupplierRowIds}
               onCheckedRowIdsChange={handleUnpaidSupplierSelectionChange}
+              contextMenuItems={["pay", "details"]}
+              onPayClick={(row) => handleSinglePaySupplier(row)}
               renderCell={(row, col) => {
                 if (col.key === "balance_amount") {
                   return (
@@ -1897,14 +2233,43 @@ export function PaymentsPage() {
           </Stack>
 
           <Stack gap="xs">
-            <Group justify="space-between">
+            <Group justify="space-between" align="center" wrap="wrap" gap="xs">
               <Text size="lg" fw={600}>Paid History</Text>
-              <TextInput
-                placeholder="Search Supplier/DR..."
-                value={paidSupplierSearch}
-                onChange={(e) => setPaidSupplierSearch(e.currentTarget.value)}
-                style={{ width: 220 }}
-              />
+              <Group gap="xs" wrap="wrap">
+                <DateShortcutInput
+                  placeholder="From Date"
+                  value={paidSupplierFromDate}
+                  onChange={setPaidSupplierFromDate}
+                  style={{ width: 120 }}
+                />
+                <DateShortcutInput
+                  placeholder="To Date"
+                  value={paidSupplierToDate}
+                  onChange={setPaidSupplierToDate}
+                  style={{ width: 120 }}
+                />
+                <TextInput
+                  placeholder="Search Supplier/DR..."
+                  value={paidSupplierSearch}
+                  onChange={(e) => setPaidSupplierSearch(e.currentTarget.value)}
+                  style={{ width: 180 }}
+                />
+                {(paidSupplierFromDate || paidSupplierToDate || paidSupplierSearch) && (
+                  <Button
+                    size="xs"
+                    variant="subtle"
+                    color="red"
+                    leftSection={<X size={12} />}
+                    onClick={() => {
+                      setPaidSupplierFromDate("");
+                      setPaidSupplierToDate("");
+                      setPaidSupplierSearch("");
+                    }}
+                  >
+                    Reset
+                  </Button>
+                )}
+              </Group>
             </Group>
             <CustomExcelTable
               columns={paidSupplierColumns}

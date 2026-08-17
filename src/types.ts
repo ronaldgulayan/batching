@@ -10,6 +10,7 @@ export type ModuleKey =
   | 'customers'
   | 'sales'
   | 'payments'
+  | 'reports'
   | 'graba'
   | 'maintenance'
   | 'maintenance-designs'

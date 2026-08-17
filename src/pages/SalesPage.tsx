@@ -31,6 +31,7 @@ import {
   Trash2,
   Upload,
   X,
+  CreditCard,
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import {
@@ -40,6 +41,7 @@ import {
 import { SuggestionTextInput } from "../components/SuggestionTextInput";
 import { isSupabaseConfigured, supabase } from "../lib/supabaseClient";
 import { DateShortcutInput } from "../components/DateShortcutInput";
+import { useSnackbar } from "../context/SnackbarContext";
 
 type Lookup = {
   id: string;
@@ -58,6 +60,8 @@ type SaleRow = {
   unit_price: number;
   pumpcreate?: number | null;
   total_amount: number;
+  paid_amount?: number;
+  balance_amount?: number;
   payment_status: string;
   counter_date: string;
   counter: string;
@@ -78,6 +82,7 @@ type SalesRecord = {
   remarks: string | null;
   customers?: { name: string } | { name: string }[] | null;
   concrete_designs?: { code: string; pumpcreate?: number | null } | { code: string; pumpcreate?: number | null }[] | null;
+  sales_payments?: { amount: number }[] | null;
 };
 
 type SaleForm = {
@@ -135,7 +140,7 @@ const buildRemarks = (counterDate: string, counter: string) => {
 
 const REQUIRED_EXCEL_COLUMNS = [
   { key: "date", name: "Date", aliases: ["DATE", "SALE DATE", "SALEDATE"] },
-  { key: "or_no", name: "OR NO", aliases: ["OR NO", "OR NO.", "OR_NO", "ORNO", "OR NUMBER", "OR"] },
+  { key: "or_no", name: "DR NO", aliases: ["DR NO", "DR NO.", "DR_NO", "DRNO", "DR NUMBER", "DR", "OR NO", "OR NO.", "OR_NO", "ORNO", "OR NUMBER", "OR"] },
   { key: "client_name", name: "CLIENT NAME", aliases: ["CLIENT NAME", "CLIENT_NAME", "CLIENTNAME", "CLIENT", "CUSTOMER NAME", "CUSTOMER"] },
   { key: "design", name: "DESIGN", aliases: ["DESIGN", "MIX CODE", "CONCRETE DESIGN", "DESIGN CODE"] },
   { key: "site", name: "SITE", aliases: ["SITE", "PROJECT SITE", "LOCATION"] },
@@ -186,7 +191,7 @@ const batchCountOptions = Array.from({ length: 9 }, (_, index) => {
 const saleColumns: ExcelColumn<SaleRow>[] = [
   {
     key: "sale_or_number",
-    label: "OR",
+    label: "DR No",
     type: "text",
     width: 90,
     sortable: true,
@@ -229,6 +234,7 @@ const saleColumns: ExcelColumn<SaleRow>[] = [
 ];
 
 export function SalesPage() {
+  const { showSuccess, showError } = useSnackbar();
   const formPanelRef = useRef<HTMLDivElement | null>(null);
   const [rows, setRows] = useState<SaleRow[]>([]);
   const [customers, setCustomers] = useState<Lookup[]>([]);
@@ -250,6 +256,19 @@ export function SalesPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+
+  // Pay Single Sale Modal State
+  const [payModalOpen, setPayModalOpen] = useState(false);
+  const [payingSale, setPayingSale] = useState<SaleRow | null>(null);
+  const [payForm, setPayForm] = useState({
+    payment_date: new Date().toISOString().slice(0, 10),
+    payment_method: "Cash",
+    amount: 0,
+    ck_number: "",
+    sales_person: "",
+    remarks: "Paid",
+  });
+  const [salesPeople, setSalesPeople] = useState<Lookup[]>([]);
   const [salesSearch, setSalesSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "unpaid" | "paid" | "deposit">("all");
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -408,7 +427,7 @@ export function SalesPage() {
         const orNum = Number(rawOrNo || 0);
         const hasRawDate = Boolean(rawDate && String(rawDate).trim() !== "");
 
-        // STRICT VALIDATION: Row must have complete Date, OR NO, Client Name, Design, Site, Cubic (>0), Price (>0)
+        // STRICT VALIDATION: Row must have complete Date, DR NO, Client Name, Design, Site, Cubic (>0), Price (>0)
         if (
           !hasRawDate ||
           !orNum ||
@@ -444,11 +463,11 @@ export function SalesPage() {
 
       if (parsedItems.length === 0) {
         throw new Error(
-          "No complete sales records found in the Excel file. Please ensure rows contain Date, OR NO, Client Name, Design, Site, Cubic (>0), and Price (>0)."
+          "No complete sales records found in the Excel file. Please ensure rows contain Date, DR NO, Client Name, Design, Site, Cubic (>0), and Price (>0)."
         );
       }
 
-      // Step 2: Check existing OR numbers in database to skip duplicates
+      // Step 2: Check existing DR numbers in database to skip duplicates
       const orNumberArray = Array.from(uniqueOrNumbers);
       const { data: existingSales, error: fetchErr } = await supabase
         .from("sales_records")
@@ -624,10 +643,13 @@ export function SalesPage() {
         resultMsg += `!`;
 
         setImportSuccess(resultMsg);
+        showSuccess(resultMsg, "Import Successful");
       }
       await loadRows();
     } catch (err: any) {
-      setImportError(err?.message || "Failed to process Excel file.");
+      const errMsg = err?.message || "Failed to process Excel file.";
+      setImportError(errMsg);
+      showError(errMsg);
     } finally {
       setImporting(false);
       setImportProgress(null);
@@ -654,6 +676,7 @@ export function SalesPage() {
       const matchesSearch =
         !cleaned ||
         [
+          `DR ${row.sale_or_number}`,
           `OR ${row.sale_or_number}`,
           row.sale_or_number,
           row.sale_date,
@@ -719,10 +742,12 @@ export function SalesPage() {
       { data: customerData, error: customerError },
       { data: designData, error: designError },
       siteResult,
+      salesPeopleResult,
     ] = await Promise.all([
       supabase.from("customers").select("id,name").order("name"),
       supabase.from("concrete_designs").select("id,code,pumpcreate").order("code"),
       supabase.from("project_sites").select("id,name").order("name"),
+      supabase.from("sales_people").select("id,name").order("name"),
     ]);
 
     if (customerError || designError || siteResult.error) {
@@ -752,6 +777,14 @@ export function SalesPage() {
         label: site.name,
       })),
     );
+    if (salesPeopleResult?.data) {
+      setSalesPeople(
+        salesPeopleResult.data.map((sp) => ({
+          id: sp.id,
+          label: sp.name,
+        })),
+      );
+    }
   }
 
   async function loadRows() {
@@ -765,7 +798,7 @@ export function SalesPage() {
       const { data, error: loadError } = await supabase
         .from("sales_records")
         .select(
-          "id,sale_or_number,sale_date,customer_id,manual_customer_name,project_site,cubic_volume,unit_price,pumpcreate,total_amount,payment_status,customers(name),concrete_designs(code,pumpcreate),remarks",
+          "id,sale_or_number,sale_date,customer_id,manual_customer_name,project_site,cubic_volume,unit_price,pumpcreate,total_amount,payment_status,customers(name),concrete_designs(code,pumpcreate),remarks,sales_payments(amount)",
         )
         .order("sale_or_number", { ascending: false })
         .limit(300);
@@ -791,6 +824,14 @@ export function SalesPage() {
             : record.concrete_designs?.pumpcreate;
           const pumpVal = Number(record.pumpcreate ?? designPumpcreate ?? 0);
           const baseTotal = Number(record.total_amount || 0);
+          const fullTotal = baseTotal + pumpVal;
+          const paymentsList = Array.isArray(record.sales_payments)
+            ? record.sales_payments
+            : record.sales_payments
+            ? [record.sales_payments]
+            : [];
+          const paidSum = paymentsList.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+          const balance = Math.max(0, fullTotal - paidSum);
 
           return {
             id: record.id,
@@ -803,7 +844,9 @@ export function SalesPage() {
             cubic_volume: Number(record.cubic_volume || 0),
             unit_price: Number(record.unit_price || 0),
             pumpcreate: record.pumpcreate ?? designPumpcreate ?? null,
-            total_amount: baseTotal + pumpVal,
+            total_amount: fullTotal,
+            paid_amount: paidSum,
+            balance_amount: balance,
             payment_status: record.payment_status,
             counter_date: remarkValue(record.remarks, "Counter Date"),
             counter: remarkValue(record.remarks, "Counter"),
@@ -987,7 +1030,7 @@ export function SalesPage() {
 
     if (startOrNumber < nextOrNumber) {
       setError(
-        `OR No must be ${nextOrNumber} or higher. Used or skipped numbers cannot be reused.`,
+        `DR No must be ${nextOrNumber} or higher. Used or skipped numbers cannot be reused.`,
       );
       return;
     }
@@ -1081,7 +1124,7 @@ export function SalesPage() {
     const isKeepingSingleEditedOr = editingSale && orNumber === editingSale.originalOrNumber;
 
     if (!isKeepingOriginalOr && !isKeepingSingleEditedOr && orNumber < nextOrNumber) {
-      return `${rowLabel}: OR No must be ${nextOrNumber} or higher. Used or skipped numbers cannot be reused.`;
+      return `${rowLabel}: DR No must be ${nextOrNumber} or higher. Used or skipped numbers cannot be reused.`;
     }
 
     if (
@@ -1098,7 +1141,7 @@ export function SalesPage() {
 
   function startEditSale(row: SaleRow) {
     if (row.payment_status === "paid") {
-      setError(`OR No. ${row.sale_or_number} is already paid and cannot be edited.`);
+      setError(`DR No. ${row.sale_or_number} is already paid and cannot be edited.`);
       return;
     }
     setEditingSale({ id: row.id, originalOrNumber: row.sale_or_number });
@@ -1135,7 +1178,7 @@ export function SalesPage() {
 
   async function deleteSale(row: SaleRow) {
     if (row.payment_status === "paid") {
-      setError(`OR No. ${row.sale_or_number} is already paid and cannot be deleted.`);
+      setError(`DR No. ${row.sale_or_number} is already paid and cannot be deleted.`);
       return;
     }
     if (!window.confirm("Are you sure you want to delete this sale? This will perform a hard delete.")) {
@@ -1154,10 +1197,13 @@ export function SalesPage() {
 
     if (deleteError) {
       setError(deleteError.message);
+      showError(deleteError.message);
       return;
     }
 
-    setMessage("Sale deleted successfully.");
+    const deleteMsg = `Sale DR No. ${row.sale_or_number} deleted successfully.`;
+    setMessage(deleteMsg);
+    showSuccess(deleteMsg);
     if (editingSale?.id === row.id) {
       cancelEditSale();
     }
@@ -1173,7 +1219,9 @@ export function SalesPage() {
     });
 
     if (paidInSelection.length > 0) {
-      setError(`Cannot delete ${paidInSelection.length} selected sale(s) because they are already marked as Paid.`);
+      const errTxt = `Cannot delete ${paidInSelection.length} selected sale(s) because they are already marked as Paid.`;
+      setError(errTxt);
+      showError(errTxt);
       return;
     }
 
@@ -1195,14 +1243,18 @@ export function SalesPage() {
 
       if (deleteError) throw new Error(deleteError.message);
 
-      setMessage(`Successfully deleted ${count} sale(s).`);
+      const batchDelMsg = `Successfully deleted ${count} sale(s).`;
+      setMessage(batchDelMsg);
+      showSuccess(batchDelMsg);
       setSelectedSaleIds(new Set());
       if (editingSale && idsToDelete.includes(editingSale.id)) {
         cancelEditSale();
       }
       await loadRows();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unable to delete selected sales.");
+      const errTxt = err instanceof Error ? err.message : "Unable to delete selected sales.";
+      setError(errTxt);
+      showError(errTxt);
     } finally {
       setLoading(false);
     }
@@ -1253,7 +1305,7 @@ export function SalesPage() {
     }
 
     if (batchDrafts.length === 0) {
-      setError("Create copies first before saving multiple sales.");
+      setError("No editable sales to save.");
       return;
     }
 
@@ -1268,7 +1320,7 @@ export function SalesPage() {
       const orNumber = Number(draft.sale_or_number || 0);
       if (usedOrNumbers.has(orNumber)) {
         setError(
-          `Row ${index + 1}: OR No ${orNumber} is duplicated in the multiple sale list.`,
+          `Row ${index + 1}: DR No ${orNumber} is duplicated in the multiple sale list.`,
         );
         return;
       }
@@ -1345,13 +1397,17 @@ export function SalesPage() {
         }
       }
 
+      let saveMsg = "";
       if (updatedCount > 0 && insertedCount === 0) {
-        setMessage(`Updated ${updatedCount} sale(s) successfully.`);
+        saveMsg = `Updated ${updatedCount} sale(s) successfully.`;
       } else if (insertedCount > 0 && updatedCount === 0) {
-        setMessage(`Saved ${insertedCount} new sale(s) successfully.`);
+        saveMsg = `Saved ${insertedCount} new sale(s) successfully.`;
       } else {
-        setMessage(`Saved ${insertedCount} new sale(s) and updated ${updatedCount} sale(s) successfully.`);
+        saveMsg = `Saved ${insertedCount} new sale(s) and updated ${updatedCount} sale(s) successfully.`;
       }
+
+      setMessage(saveMsg);
+      showSuccess(saveMsg);
 
       setBatchModalOpen(false);
       setBatchDrafts([]);
@@ -1359,11 +1415,9 @@ export function SalesPage() {
       setForm({ ...emptyForm, sale_or_number: displayedNextOrNumber });
       await loadRows();
     } catch (saveError) {
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : "Unable to save multiple sales.",
-      );
+      const errTxt = saveError instanceof Error ? saveError.message : "Unable to save multiple sales.";
+      setError(errTxt);
+      showError(errTxt);
     } finally {
       setLoading(false);
     }
@@ -1419,9 +1473,9 @@ export function SalesPage() {
 
       if (insertError) throw new Error(insertError.message);
 
-      setMessage(
-        editingSale ? `Updated sale OR No ${orNumber}.` : `Saved sale OR No ${orNumber}.`,
-      );
+      const msg = editingSale ? `Updated sale DR No ${orNumber}.` : `Saved sale DR No ${orNumber}.`;
+      setMessage(msg);
+      showSuccess(msg);
       setEditingSale(null);
       setForm({
         ...emptyForm,
@@ -1429,9 +1483,83 @@ export function SalesPage() {
       });
       await loadRows();
     } catch (saveError) {
-      setError(
-        saveError instanceof Error ? saveError.message : "Unable to save sale.",
-      );
+      const errTxt = saveError instanceof Error ? saveError.message : "Unable to save sale.";
+      setError(errTxt);
+      showError(errTxt);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handlePaySale(sale: SaleRow) {
+    if (sale.payment_status === "paid") {
+      showError(`DR No. ${sale.sale_or_number} is already fully paid.`);
+      return;
+    }
+    const balance = sale.balance_amount !== undefined ? sale.balance_amount : sale.total_amount;
+    setPayingSale(sale);
+    setPayForm({
+      payment_date: new Date().toISOString().slice(0, 10),
+      payment_method: "Cash",
+      amount: balance,
+      ck_number: "",
+      sales_person: "",
+      remarks: "Paid",
+    });
+    setPayModalOpen(true);
+  }
+
+  async function submitSalePayment() {
+    if (!payingSale) return;
+    if (Number(payForm.amount) <= 0) {
+      showError("Payment amount must be greater than 0.");
+      return;
+    }
+    if (payForm.payment_method === "CK" && !payForm.ck_number.trim()) {
+      showError("CK Number is required for Check payments.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const parts = [];
+      if (payForm.sales_person.trim()) {
+        parts.push(`Sales: ${payForm.sales_person.trim()}`);
+      }
+      if (payForm.remarks.trim()) {
+        parts.push(payForm.remarks.trim());
+      }
+      const remarksVal = parts.join(" | ");
+
+      const { error: insertErr } = await supabase.from("sales_payments").insert({
+        sales_record_id: payingSale.id,
+        payment_date: payForm.payment_date,
+        amount: Number(payForm.amount),
+        payment_method: payForm.payment_method,
+        reference_number: payForm.payment_method === "CK" ? payForm.ck_number.trim() : null,
+        remarks: remarksVal || null,
+      });
+
+      if (insertErr) throw new Error(insertErr.message);
+
+      const nextPaidAmount = (payingSale.paid_amount || 0) + Number(payForm.amount);
+      const targetAmount = payingSale.total_amount;
+      const nextStatus = nextPaidAmount >= targetAmount ? "paid" : "deposit";
+
+      const { error: updateErr } = await supabase
+        .from("sales_records")
+        .update({ payment_status: nextStatus })
+        .eq("id", payingSale.id);
+
+      if (updateErr) throw new Error(updateErr.message);
+
+      const msg = `Payment of ₱${Number(payForm.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })} for DR No. ${payingSale.sale_or_number} saved successfully.`;
+      showSuccess(msg);
+      setPayModalOpen(false);
+      setPayingSale(null);
+      await loadRows();
+    } catch (err: any) {
+      showError(err.message || "Failed to record payment.");
     } finally {
       setLoading(false);
     }
@@ -1471,7 +1599,7 @@ export function SalesPage() {
                 }
               />
               <NumberInput
-                label="OR No"
+                label="DR No"
                 min={editingSale ? 1 : nextOrNumber}
                 value={form.sale_or_number}
                 onChange={(value) =>
@@ -1645,7 +1773,7 @@ export function SalesPage() {
                   Import Data
                 </Button>
               </Group>
-              <Badge variant="light">Next OR No: {displayedNextOrNumber}</Badge>
+              <Badge variant="light">Next DR No: {displayedNextOrNumber}</Badge>
             </Group>
 
             <Modal
@@ -1680,7 +1808,7 @@ export function SalesPage() {
                   >
                     <Table.Thead>
                       <Table.Tr>
-                        <Table.Th>OR No</Table.Th>
+                        <Table.Th>DR No</Table.Th>
                         <Table.Th>Date</Table.Th>
                         <Table.Th>Client Name</Table.Th>
                         <Table.Th>Design</Table.Th>
@@ -1885,7 +2013,7 @@ export function SalesPage() {
           </Badge>
         </Group>
         <TextInput
-          placeholder="Search any sale (OR, Client Name, Site, Design...)"
+          placeholder="Search any sale (DR, Client Name, Site, Design...)"
           value={salesSearch}
           onChange={(event) => setSalesSearch(event.currentTarget.value)}
         />
@@ -1943,12 +2071,13 @@ export function SalesPage() {
       <CustomExcelTable
         columns={saleColumns}
         data={filteredRows}
+        onPayClick={(row) => handlePaySale(row)}
         onEditClick={(row) => startEditSale(row)}
         onDeleteClick={(row) => deleteSale(row)}
         withSelection={true}
         checkedRowIds={selectedSaleIds}
         onCheckedRowIdsChange={setSelectedSaleIds}
-        contextMenuItems={["edit", "delete", "counter_date"]}
+        contextMenuItems={["pay", "edit", "delete", "counter_date"]}
         onCounterClick={handleCounterClick}
         renderRowActions={(row) => {
           const isPaid = row.payment_status === "paid";
@@ -2063,7 +2192,7 @@ export function SalesPage() {
           <Paper withBorder p="md" radius="sm">
             <Group gap="xs" wrap="wrap">
               <Badge color="blue" size="lg" variant="filled">Date</Badge>
-              <Badge color="blue" size="lg" variant="filled">OR NO</Badge>
+              <Badge color="blue" size="lg" variant="filled">DR NO</Badge>
               <Badge color="blue" size="lg" variant="filled">CLIENT NAME</Badge>
               <Badge color="blue" size="lg" variant="filled">DESIGN</Badge>
               <Badge color="blue" size="lg" variant="filled">SITE</Badge>
@@ -2212,6 +2341,124 @@ export function SalesPage() {
             </Button>
           </Group>
         </Stack>
+      </Modal>
+
+      {/* Pay Single Sale DR Modal */}
+      <Modal
+        opened={payModalOpen}
+        onClose={() => {
+          setPayModalOpen(false);
+          setPayingSale(null);
+        }}
+        title={
+          <Group gap="xs">
+            <CreditCard size={18} color="#10b981" />
+            <Text fw={700} size="md">
+              Pay Single DR No. {payingSale?.sale_or_number}
+            </Text>
+          </Group>
+        }
+        size="lg"
+        centered
+      >
+        {payingSale && (
+          <Stack gap="md">
+            <Paper p="sm" radius="xs" style={{ backgroundColor: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
+              <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="xs">
+                <div>
+                  <Text size="xs" c="dimmed">Client Name</Text>
+                  <Text size="sm" fw={600}>{payingSale.client_name}</Text>
+                </div>
+                <div>
+                  <Text size="xs" c="dimmed">Date</Text>
+                  <Text size="sm">{payingSale.sale_date}</Text>
+                </div>
+                <div>
+                  <Text size="xs" c="dimmed">Total Amount</Text>
+                  <Text size="sm" fw={600}>₱{payingSale.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</Text>
+                </div>
+                <div>
+                  <Text size="xs" c="dimmed">Remaining Balance</Text>
+                  <Text size="sm" fw={700} c="red.4">
+                    ₱{(payingSale.balance_amount !== undefined ? payingSale.balance_amount : payingSale.total_amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </Text>
+                </div>
+              </SimpleGrid>
+            </Paper>
+
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+              <DateShortcutInput
+                label="Payment Date"
+                value={payForm.payment_date}
+                onChange={(val) => setPayForm((p) => ({ ...p, payment_date: val }))}
+              />
+              <Select
+                label="Payment Method"
+                data={["Cash", "CK", "Online", "Deposit"]}
+                value={payForm.payment_method}
+                onChange={(val) => setPayForm((p) => ({ ...p, payment_method: val || "Cash" }))}
+              />
+            </SimpleGrid>
+
+            {payForm.payment_method === "CK" && (
+              <TextInput
+                label="CK Number"
+                placeholder="Check number..."
+                value={payForm.ck_number}
+                onChange={(e) => setPayForm((p) => ({ ...p, ck_number: e.currentTarget.value }))}
+                required
+              />
+            )}
+
+            <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
+              <NumberInput
+                label="Amount to Pay"
+                value={payForm.amount}
+                onChange={(val) => setPayForm((p) => ({ ...p, amount: Number(val || 0) }))}
+                min={0}
+                decimalScale={2}
+                thousandSeparator=","
+                prefix="₱ "
+                required
+              />
+              <SuggestionTextInput
+                label="Sales Agent / Person"
+                value={payForm.sales_person}
+                onValueChange={(val: string) => setPayForm((p) => ({ ...p, sales_person: val }))}
+                suggestions={salesPeople.map((sp) => sp.label)}
+                placeholder="Enter sales agent name..."
+              />
+            </SimpleGrid>
+
+            <TextInput
+              label="Remarks / Note"
+              placeholder="e.g. Paid, Partial Deposit, Counter..."
+              value={payForm.remarks}
+              onChange={(e) => setPayForm((p) => ({ ...p, remarks: e.currentTarget.value }))}
+            />
+
+            <Group justify="flex-end" mt="md">
+              <Button
+                variant="light"
+                color="gray"
+                onClick={() => {
+                  setPayModalOpen(false);
+                  setPayingSale(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                color="teal"
+                leftSection={<CreditCard size={16} />}
+                onClick={submitSalePayment}
+                loading={loading}
+              >
+                Confirm Payment
+              </Button>
+            </Group>
+          </Stack>
+        )}
       </Modal>
     </Stack>
   );

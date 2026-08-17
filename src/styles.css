@@ -206,3 +206,247 @@ body {
   margin-left: auto !important;
   margin-right: 0 !important;
 }
+
+/* ==========================================================================
+   Bottom-Right Global Snackbar / Toast Notifications
+   ========================================================================== */
+.snackbar-portal-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 999999;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 10px;
+  pointer-events: none;
+  max-width: 420px;
+  width: calc(100vw - 48px);
+}
+
+.snackbar-toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #151c2c;
+  color: #f8fafc;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(12px);
+  animation: snackbarSlideIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+@keyframes snackbarSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(100%) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.snackbar-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.snackbar-icon.success {
+  color: #10b981;
+}
+
+.snackbar-icon.error {
+  color: #ef4444;
+}
+
+.snackbar-icon.warning {
+  color: #f59e0b;
+}
+
+.snackbar-icon.info {
+  color: #3b82f6;
+}
+
+.snackbar-toast-success {
+  border-left: 4px solid #10b981;
+}
+
+.snackbar-toast-error {
+  border-left: 4px solid #ef4444;
+}
+
+.snackbar-toast-warning {
+  border-left: 4px solid #f59e0b;
+}
+
+.snackbar-toast-info {
+  border-left: 4px solid #3b82f6;
+}
+
+.snackbar-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.snackbar-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #ffffff;
+  margin-bottom: 2px;
+  letter-spacing: -0.01em;
+}
+
+.snackbar-message {
+  font-size: 13px;
+  color: #cbd5e1;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.snackbar-close-btn {
+  background: transparent;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+  margin-left: 4px;
+}
+
+.snackbar-close-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #f8fafc;
+}
+
+/* ==========================================================================
+   Statement of Account (SOA) Print Styles & Document Container
+   ========================================================================== */
+.soa-paper-sheet {
+  background: #ffffff !important;
+  color: #000000 !important;
+  width: 100%;
+  max-width: 840px;
+  min-height: 1050px;
+  margin: 0 auto;
+  padding: 48px 60px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45), 0 2px 6px rgba(0, 0, 0, 0.25);
+  border-radius: 4px;
+  font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
+  box-sizing: border-box;
+  position: relative;
+}
+
+.soa-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  margin-bottom: 10px;
+  font-size: 12.5px;
+  font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
+  color: #000000;
+  box-sizing: border-box;
+}
+
+.soa-table th,
+.soa-table td {
+  border: 1px solid #222222;
+  padding: 5px 8px;
+  color: #000000;
+  vertical-align: middle;
+  line-height: 1.35;
+}
+
+.soa-table th {
+  font-weight: 700;
+  text-align: center;
+  font-size: 12px;
+  background-color: #ffffff;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.soa-table td.center {
+  text-align: center;
+}
+
+.soa-table td.right {
+  text-align: right;
+}
+
+.soa-table td.left {
+  text-align: left;
+}
+
+.soa-table tr.subtotal-row td {
+  font-weight: 700;
+  background-color: #ffffff;
+}
+
+@media print {
+  html, body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-family: Arial, sans-serif !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Hide app navigation, headers, controls, and snackbars */
+  .mantine-AppShell-header,
+  .mantine-AppShell-navbar,
+  .no-print,
+  .snackbar-portal-container,
+  .soa-controls-panel {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  .mantine-AppShell-main {
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #ffffff !important;
+  }
+
+  .page {
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .soa-paper-sheet {
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    border: none !important;
+    padding: 10mm 15mm !important;
+    margin: 0 auto !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    min-height: auto !important;
+  }
+
+  .soa-table th,
+  .soa-table td {
+    border: 1px solid #000000 !important;
+  }
+
+  @page {
+    size: A4 portrait;
+    margin: 10mm 15mm;
+  }
+}
+

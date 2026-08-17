@@ -727,7 +727,7 @@ export function DashboardPage() {
                 <Table.Thead>
                   <Table.Tr>
                     <Table.Th>Date</Table.Th>
-                    <Table.Th>OR</Table.Th>
+                    <Table.Th>DR No</Table.Th>
                     <Table.Th>Client</Table.Th>
                     <Table.Th>Amount</Table.Th>
                   </Table.Tr>

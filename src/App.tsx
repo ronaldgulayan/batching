@@ -28,6 +28,7 @@ import { MaintenanceGrabaItemsPage } from "./pages/MaintenanceGrabaItemsPage";
 import { MaintenanceGrabaTrucksPage } from "./pages/MaintenanceGrabaTrucksPage";
 import { MaintenanceUsersPage } from "./pages/MaintenanceUsersPage";
 import { PaymentsPage } from "./pages/PaymentsPage";
+import { ReportsPage } from "./pages/ReportsPage";
 import { SalesPage } from "./pages/SalesPage";
 import { LoginPage } from "./pages/LoginPage";
 import { isSupabaseConfigured, supabase } from "./lib/supabaseClient";
@@ -293,6 +294,7 @@ export function App() {
           {activeModule === "dashboard" && <DashboardPage />}
           {activeModule === "sales" && <SalesPage />}
           {activeModule === "payments" && <PaymentsPage />}
+          {activeModule === "reports" && <ReportsPage />}
           {activeModule === "customers" && <CustomersPage />}
           {activeModule === "graba" && <GrabaPage />}
           {activeModule === "suppliers" && <SupplierTransactionsPage />}

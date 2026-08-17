@@ -439,7 +439,7 @@ export function CustomersPage() {
                     <Table withTableBorder withColumnBorders highlightOnHover verticalSpacing="xs">
                       <Table.Thead>
                         <Table.Tr>
-                          <Table.Th>OR #</Table.Th>
+                          <Table.Th>DR #</Table.Th>
                           <Table.Th>Date</Table.Th>
                           <Table.Th>Design</Table.Th>
                           <Table.Th>Cubic (m³)</Table.Th>

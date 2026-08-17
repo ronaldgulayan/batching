@@ -3,14 +3,10 @@ import { TextInput, CloseButton, type TextInputProps } from "@mantine/core";
 
 export function parseDateShortcut(input: string): string {
   const clean = input.trim();
+  if (!clean) return "";
+
   const today = new Date();
   const pad = (n: number) => String(n).padStart(2, "0");
-
-  if (!clean) {
-    return `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
-  }
-
-  const digits = clean.replace(/\D/g, "");
   const currentYear = today.getFullYear();
 
   const formatDateIfValid = (y: number, m: number, d: number): string | null => {
@@ -20,19 +16,33 @@ export function parseDateShortcut(input: string): string {
     return `${y}-${pad(m)}-${pad(d)}`;
   };
 
+  const digits = clean.replace(/\D/g, "");
+
+  // 4 digits: MMDD
   if (digits.length === 4) {
     const m = Number(digits.substring(0, 2));
     const d = Number(digits.substring(2, 4));
     const formatted = formatDateIfValid(currentYear, m, d);
     if (formatted) return formatted;
-  } else if (digits.length === 6) {
+  }
+  // 6 digits: MMDDYY
+  else if (digits.length === 6) {
     const m = Number(digits.substring(0, 2));
     const d = Number(digits.substring(2, 4));
     const yy = Number(digits.substring(4, 6));
     const y = 2000 + yy;
     const formatted = formatDateIfValid(y, m, d);
     if (formatted) return formatted;
-  } else if (digits.length === 8) {
+  }
+  // 8 digits: YYYYMMDD or MMDDYYYY
+  else if (digits.length === 8) {
+    if (digits.startsWith("20") || digits.startsWith("19")) {
+      const y = Number(digits.substring(0, 4));
+      const m = Number(digits.substring(4, 6));
+      const d = Number(digits.substring(6, 8));
+      const formatted = formatDateIfValid(y, m, d);
+      if (formatted) return formatted;
+    }
     const m = Number(digits.substring(0, 2));
     const d = Number(digits.substring(2, 4));
     const y = Number(digits.substring(4, 8));
@@ -40,7 +50,7 @@ export function parseDateShortcut(input: string): string {
     if (formatted) return formatted;
   }
 
-  const isoRegex = /^(\d{4})-(\d{2})-(\d{2})$/;
+  const isoRegex = /^(\d{4})-(\d{1,2})-(\d{1,2})$/;
   const match = clean.match(isoRegex);
   if (match) {
     const y = Number(match[1]);
@@ -56,7 +66,7 @@ export function parseDateShortcut(input: string): string {
     return `${parsedDate.getFullYear()}-${pad(parsedDate.getMonth() + 1)}-${pad(parsedDate.getDate())}`;
   }
 
-  return `${currentYear}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+  return clean;
 }
 
 type Props = Omit<TextInputProps, "value" | "onChange"> & {
@@ -65,27 +75,22 @@ type Props = Omit<TextInputProps, "value" | "onChange"> & {
   clearable?: boolean;
 };
 
-export function DateShortcutInput({ value, onChange, clearable = false, ...props }: Props) {
-  const [localVal, setLocalVal] = useState(value);
+export function DateShortcutInput({ value, onChange, clearable = true, ...props }: Props) {
+  const [localVal, setLocalVal] = useState(value || "");
 
   // Synchronize internal input value with the value prop from parent
   useEffect(() => {
-    setLocalVal(value);
+    setLocalVal(value || "");
   }, [value]);
 
   const commitValue = (val: string) => {
-    if (!val.trim()) {
-      if (clearable) {
-        setLocalVal("");
-        onChange("");
-      } else {
-        const formatted = parseDateShortcut("");
-        setLocalVal(formatted);
-        onChange(formatted);
-      }
+    const clean = val.trim();
+    if (!clean) {
+      setLocalVal("");
+      onChange("");
       return;
     }
-    const formatted = parseDateShortcut(val);
+    const formatted = parseDateShortcut(clean);
     setLocalVal(formatted);
     onChange(formatted);
   };
@@ -115,7 +120,7 @@ export function DateShortcutInput({ value, onChange, clearable = false, ...props
     <TextInput
       {...props}
       type="text"
-      placeholder="e.g. 0721 or YYYY-MM-DD"
+      placeholder={props.placeholder || "e.g. 0721 or YYYY-MM-DD"}
       value={localVal}
       onChange={(e) => setLocalVal(e.currentTarget.value)}
       onBlur={handleBlur}

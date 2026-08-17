@@ -3,6 +3,7 @@ import { Alert, Badge, Button, Group, LoadingOverlay, NumberInput, Paper, Simple
 import { AlertCircle, Edit3, RefreshCw, Save, Trash2, X } from 'lucide-react';
 import { isSupabaseConfigured, supabase } from '../lib/supabaseClient';
 import { CustomExcelTable, type ExcelColumn } from './CustomExcelTable';
+import { useSnackbar } from '../context/SnackbarContext';
 
 type FieldConfig = {
   key: string;
@@ -25,6 +26,7 @@ type RecordRow = {
 };
 
 export function MaintenanceLookupPage({ table, orderBy, fields, columns, uniqueKey }: Props) {
+  const { showSuccess, showError } = useSnackbar();
   const [rows, setRows] = useState<RecordRow[]>([]);
   const [form, setForm] = useState<Record<string, string | number>>({});
   const [loading, setLoading] = useState(false);
@@ -98,12 +100,15 @@ export function MaintenanceLookupPage({ table, orderBy, fields, columns, uniqueK
 
     if (saveError) {
       setError(saveError.message);
+      showError(saveError.message);
       return;
     }
 
+    const successTxt = editingId ? 'Record updated successfully.' : 'Record saved successfully.';
     setForm({});
     setEditingId(null);
-    setMessage(editingId ? 'Updated.' : 'Saved.');
+    setMessage(successTxt);
+    showSuccess(successTxt);
     await loadRows();
   }
 
@@ -137,10 +142,12 @@ export function MaintenanceLookupPage({ table, orderBy, fields, columns, uniqueK
 
     if (deleteError) {
       setError(deleteError.message);
+      showError(deleteError.message);
       return;
     }
 
-    setMessage('Deleted.');
+    setMessage('Record deleted successfully.');
+    showSuccess('Record deleted successfully.');
     if (editingId === row.id) {
       cancelEdit();
     }

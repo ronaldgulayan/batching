@@ -1,5 +1,6 @@
 import {
   ClipboardList,
+  FileText,
   Gauge,
   Landmark,
   ReceiptText,
@@ -88,6 +89,11 @@ export const navItems = [
     key: "payments" as const,
     label: "Payment",
     icon: Landmark,
+  },
+  {
+    key: "reports" as const,
+    label: "Reports (SOA)",
+    icon: FileText,
   },
   {
     key: "customers" as const,
