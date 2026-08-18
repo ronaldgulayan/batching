@@ -560,6 +560,7 @@ export function MaintenanceUsersPage() {
                 { value: "staff", label: "Staff" },
               ]}
               value={role}
+              comboboxProps={{ withinPortal: true, zIndex: 10000 }}
               onChange={(val) => setRole(val || "staff")}
               checkIconPosition="right"
               renderOption={({ option, checked }) => (

@@ -703,6 +703,7 @@ export function GrabaPage() {
                 label="Payment Method"
                 data={["Cash", "CK", "Online", "Deposit"]}
                 value={payForm.payment_method}
+                comboboxProps={{ withinPortal: true, zIndex: 10000 }}
                 onChange={(val) => setPayForm((p) => ({ ...p, payment_method: val || "Cash" }))}
               />
             </SimpleGrid>

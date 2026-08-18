@@ -23,9 +23,12 @@ import {
 } from "@mantine/core";
 import {
   AlertCircle,
+  Calendar,
+  Copy,
   CopyPlus,
   Edit3,
   FileSpreadsheet,
+  Plus,
   RefreshCw,
   Save,
   Trash2,
@@ -244,6 +247,29 @@ export function SalesPage() {
   const [batchCount, setBatchCount] = useState("2");
   const [batchDrafts, setBatchDrafts] = useState<BatchSaleDraft[]>([]);
   const [batchModalOpen, setBatchModalOpen] = useState(false);
+
+  const cellInputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
+
+  const setCellRef = (rowIndex: number, colKey: string) => (el: HTMLInputElement | null) => {
+    const key = `${rowIndex}-${colKey}`;
+    if (el) {
+      cellInputRefs.current.set(key, el);
+    } else {
+      cellInputRefs.current.delete(key);
+    }
+  };
+
+  const focusCell = (rowIndex: number, colKey: string) => {
+    requestAnimationFrame(() => {
+      const el = cellInputRefs.current.get(`${rowIndex}-${colKey}`);
+      if (el) {
+        el.focus();
+        if (el.select) {
+          el.select();
+        }
+      }
+    });
+  };
   const [editingSale, setEditingSale] = useState<{
     id: string;
     originalOrNumber: number;
@@ -942,7 +968,7 @@ export function SalesPage() {
 
     const { data, error: insertError } = await supabase
       .from("project_sites")
-      .upsert({ name: cleaned }, { onConflict: "name" })
+      .insert({ name: cleaned })
       .select("id,name")
       .single();
 
@@ -951,7 +977,7 @@ export function SalesPage() {
         .from("project_sites")
         .select("id,name")
         .ilike("name", cleaned)
-        .single();
+        .maybeSingle();
       if (fallbackSite) {
         setSites((current) => [...current, { id: fallbackSite.id, label: fallbackSite.name }]);
         return fallbackSite.name;
@@ -991,7 +1017,7 @@ export function SalesPage() {
 
     const { data, error: insertError } = await supabase
       .from("concrete_designs")
-      .upsert({ code: cleaned }, { onConflict: "code" })
+      .insert({ code: cleaned })
       .select("id,code")
       .single();
 
@@ -1000,7 +1026,7 @@ export function SalesPage() {
         .from("concrete_designs")
         .select("id,code")
         .ilike("code", cleaned)
-        .single();
+        .maybeSingle();
       if (fallbackDesign) {
         setDesigns((current) => [...current, { id: fallbackDesign.id, label: fallbackDesign.code }]);
         return fallbackDesign.id;
@@ -1022,6 +1048,223 @@ export function SalesPage() {
 
   function designIdFromLabel(label: string) {
     return getDesignFromLabel(label)?.id ?? null;
+  }
+
+  const BATCH_GRID_COLUMNS = [
+    "sale_or_number",
+    "sale_date",
+    "client_name",
+    "design_label",
+    "project_site",
+    "cubic_volume",
+    "unit_price",
+    "pumpcreate",
+  ] as const;
+
+  type BatchGridColumnKey = (typeof BATCH_GRID_COLUMNS)[number];
+
+  const handleCellKeyDown = (
+    rowIndex: number,
+    colKey: BatchGridColumnKey,
+    event: React.KeyboardEvent<HTMLInputElement>,
+  ) => {
+    const colIndex = BATCH_GRID_COLUMNS.indexOf(colKey);
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      if (event.shiftKey) {
+        if (rowIndex > 0) {
+          focusCell(rowIndex - 1, colKey);
+        }
+      } else {
+        if (rowIndex < batchDrafts.length - 1) {
+          focusCell(rowIndex + 1, colKey);
+        } else {
+          // Last row! Auto append new row & focus same column in new row
+          addNewBatchDraftRow(colKey);
+        }
+      }
+      return;
+    }
+
+    if (
+      (event.key === "Delete" || event.key === "Backspace") &&
+      (event.ctrlKey || event.altKey)
+    ) {
+      event.preventDefault();
+      removeBatchDraft(batchDrafts[rowIndex].id, colKey);
+      return;
+    }
+
+    if (event.key === "Tab") {
+      if (event.shiftKey) {
+        if (colIndex > 0) {
+          event.preventDefault();
+          focusCell(rowIndex, BATCH_GRID_COLUMNS[colIndex - 1]);
+        } else if (rowIndex > 0) {
+          event.preventDefault();
+          focusCell(rowIndex - 1, BATCH_GRID_COLUMNS[BATCH_GRID_COLUMNS.length - 1]);
+        }
+      } else {
+        if (colIndex < BATCH_GRID_COLUMNS.length - 1) {
+          event.preventDefault();
+          focusCell(rowIndex, BATCH_GRID_COLUMNS[colIndex + 1]);
+        } else if (rowIndex < batchDrafts.length - 1) {
+          event.preventDefault();
+          focusCell(rowIndex + 1, BATCH_GRID_COLUMNS[0]);
+        } else {
+          event.preventDefault();
+          addNewBatchDraftRow(BATCH_GRID_COLUMNS[0]);
+        }
+      }
+      return;
+    }
+  };
+
+  function addNewBatchDraftRow(targetColKey: BatchGridColumnKey = "sale_or_number") {
+    const matchedDesign = getDesignFromLabel(form.design_label);
+    const defaultPumpcreate = form.pumpcreate !== "" ? form.pumpcreate : (matchedDesign?.pumpcreate ?? "");
+
+    setBatchDrafts((prev) => {
+      const lastDraft = prev[prev.length - 1];
+      const nextOr = lastDraft
+        ? Number(lastDraft.sale_or_number || 0) + 1
+        : nextOrNumber;
+
+      const newDraft: BatchSaleDraft = lastDraft
+        ? {
+            ...lastDraft,
+            id: `${Date.now()}-${prev.length}-${Math.random()}`,
+            sale_or_number: nextOr,
+          }
+        : {
+            ...form,
+            id: `${Date.now()}-${prev.length}-${Math.random()}`,
+            sale_or_number: nextOr,
+            concrete_design_id: form.concrete_design_id ?? matchedDesign?.id ?? null,
+            pumpcreate: defaultPumpcreate,
+          };
+
+      const newIndex = prev.length;
+      setTimeout(() => {
+        focusCell(newIndex, targetColKey);
+      }, 60);
+
+      return [...prev, newDraft];
+    });
+  }
+
+  function copyRow1ToAll() {
+    if (batchDrafts.length < 2) return;
+    const first = batchDrafts[0];
+    setBatchDrafts((prev) =>
+      prev.map((draft, idx) => {
+        if (idx === 0) return draft;
+        return {
+          ...draft,
+          client_name: first.client_name,
+          concrete_design_id: first.concrete_design_id,
+          design_label: first.design_label,
+          project_site: first.project_site,
+          unit_price: first.unit_price,
+          pumpcreate: first.pumpcreate,
+          counter_date: first.counter_date,
+          counter: first.counter,
+        };
+      }),
+    );
+    showSuccess("Copied Row 1 Client, Design, Site, & Price to all rows!");
+  }
+
+  function syncAllDates() {
+    if (batchDrafts.length === 0) return;
+    const targetDate = batchDrafts[0].sale_date || today();
+    setBatchDrafts((prev) =>
+      prev.map((draft) => ({
+        ...draft,
+        sale_date: targetDate,
+      })),
+    );
+    showSuccess(`Synced all rows to date: ${targetDate}`);
+  }
+
+  function handleTablePaste(event: React.ClipboardEvent) {
+    const pasteData = event.clipboardData.getData("text");
+    if (!pasteData || (!pasteData.includes("\t") && !pasteData.includes("\n"))) {
+      return;
+    }
+
+    event.preventDefault();
+    const rawRows = pasteData
+      .split(/\r\n|\n|\r/)
+      .map((r) => r.trim())
+      .filter(Boolean);
+
+    if (rawRows.length === 0) return;
+
+    const baseStartOr = batchDrafts.length > 0
+      ? Number(batchDrafts[batchDrafts.length - 1].sale_or_number || nextOrNumber - 1) + 1
+      : Number(form.sale_or_number || nextOrNumber);
+
+    const newDrafts: BatchSaleDraft[] = [];
+
+    rawRows.forEach((rowText, i) => {
+      const cols = rowText.split("\t").map((c) => c.trim());
+      let dr = baseStartOr + i;
+      let date = batchDrafts[0]?.sale_date || form.sale_date || today();
+      let client = form.client_name || "";
+      let design = form.design_label || "";
+      let site = form.project_site || "";
+      let cubic: number | "" = form.cubic_volume || "";
+      let price: number | "" = form.unit_price || "";
+      let pump: number | "" = form.pumpcreate || "";
+
+      if (cols.length === 1 && !isNaN(Number(cols[0]))) {
+        cubic = Number(cols[0]);
+      } else if (cols.length >= 2) {
+        if (!isNaN(Number(cols[0])) && Number(cols[0]) > 100) {
+          dr = Number(cols[0]);
+          if (cols[1]) date = parseDateShortcut(cols[1]) || cols[1];
+          if (cols[2]) client = cols[2];
+          if (cols[3]) design = cols[3];
+          if (cols[4]) site = cols[4];
+          if (cols[5]) cubic = Number(cols[5]) || "";
+          if (cols[6]) price = Number(cols[6]) || "";
+          if (cols[7]) pump = Number(cols[7]) || "";
+        } else {
+          date = parseDateShortcut(cols[0]) || cols[0];
+          if (!isNaN(Number(cols[1]))) dr = Number(cols[1]);
+          if (cols[2]) client = cols[2];
+          if (cols[3]) design = cols[3];
+          if (cols[4]) site = cols[4];
+          if (cols[5]) cubic = Number(cols[5]) || "";
+          if (cols[6]) price = Number(cols[6]) || "";
+          if (cols[7]) pump = Number(cols[7]) || "";
+        }
+      }
+
+      const matchedDesign = getDesignFromLabel(design);
+      newDrafts.push({
+        ...form,
+        id: `${Date.now()}-${i}-${Math.random()}`,
+        sale_or_number: dr,
+        sale_date: date,
+        client_name: client,
+        concrete_design_id: matchedDesign?.id ?? null,
+        design_label: design,
+        project_site: site,
+        cubic_volume: cubic,
+        unit_price: price,
+        pumpcreate: pump !== "" ? pump : (matchedDesign?.pumpcreate ?? ""),
+        counter_date: "",
+        counter: "",
+      });
+    });
+
+    if (newDrafts.length > 0) {
+      setBatchDrafts((prev) => [...prev, ...newDrafts]);
+      showSuccess(`Pasted and added ${newDrafts.length} row(s) from clipboard!`);
+    }
   }
 
   function createBatchDrafts() {
@@ -1089,14 +1332,19 @@ export function SalesPage() {
     });
   }
 
-  function removeBatchDraft(id: string) {
+  function removeBatchDraft(id: string, focusColKey: BatchGridColumnKey = "client_name") {
     setBatchDrafts((current) => {
       const removedIndex = current.findIndex((draft) => draft.id === id);
       if (removedIndex === -1) return current;
 
+      if (current.length <= 1) {
+        setBatchModalOpen(false);
+        return [];
+      }
+
       const filtered = current.filter((draft) => draft.id !== id);
       let previousOrNumber = 0;
-      return filtered.map((draft, index) => {
+      const renumbered = filtered.map((draft, index) => {
         if (index < removedIndex || index === 0) {
           previousOrNumber = Number(draft.sale_or_number || previousOrNumber);
           return draft;
@@ -1105,6 +1353,13 @@ export function SalesPage() {
         previousOrNumber += 1;
         return { ...draft, sale_or_number: previousOrNumber };
       });
+
+      const nextFocusIndex = Math.min(removedIndex, renumbered.length - 1);
+      setTimeout(() => {
+        focusCell(nextFocusIndex, focusColKey);
+      }, 50);
+
+      return renumbered;
     });
   }
 
@@ -1368,6 +1623,10 @@ export function SalesPage() {
 
         const isExistingRecord = rows.some((r) => r.id === draft.id);
 
+        const cubicVal = Number(draft.cubic_volume || 0);
+        const priceVal = Number(draft.unit_price || 0);
+        const baseTotal = cubicVal * priceVal;
+
         const saleRecordPayload = {
           sale_or_number: Number(draft.sale_or_number || 0),
           sale_date: draft.sale_date,
@@ -1375,8 +1634,9 @@ export function SalesPage() {
           manual_customer_name: null,
           concrete_design_id: designId,
           project_site: siteName,
-          cubic_volume: Number(draft.cubic_volume || 0),
-          unit_price: Number(draft.unit_price || 0),
+          cubic_volume: cubicVal,
+          unit_price: priceVal,
+          total_amount: baseTotal,
           pumpcreate: draft.pumpcreate === "" ? null : Number(draft.pumpcreate),
           remarks: buildRemarks(draft.counter_date, draft.counter),
         };
@@ -1449,6 +1709,9 @@ export function SalesPage() {
       const designId = await ensureDesignId(form.design_label);
       if (!designId) throw new Error("Design is required.");
 
+      const formCubic = Number(form.cubic_volume || 0);
+      const formPrice = Number(form.unit_price || 0);
+
       const salePayload = {
         sale_or_number: orNumber,
         sale_date: form.sale_date,
@@ -1456,8 +1719,9 @@ export function SalesPage() {
         manual_customer_name: null,
         concrete_design_id: designId,
         project_site: siteName,
-        cubic_volume: Number(form.cubic_volume || 0),
-        unit_price: Number(form.unit_price || 0),
+        cubic_volume: formCubic,
+        unit_price: formPrice,
+        total_amount: formCubic * formPrice,
         pumpcreate: form.pumpcreate === "" ? null : Number(form.pumpcreate),
         remarks: buildRemarks(form.counter_date, form.counter),
       };
@@ -1776,48 +2040,114 @@ export function SalesPage() {
               <Badge variant="light">Next DR No: {displayedNextOrNumber}</Badge>
             </Group>
 
+            {/* Multiple Sales Entry Modal */}
             <Modal
               opened={batchModalOpen && hasBatchDrafts}
               onClose={closeBatchDrafts}
-              title="Multiple Sales"
+              title={
+                <Group gap="xs">
+                  <CopyPlus size={20} color="#3b82f6" />
+                  <Text fw={700} size="lg">Multiple Sales Entry & Dispatch</Text>
+                </Group>
+              }
               size="95%"
               closeOnClickOutside={!loading}
               closeOnEscape={!loading}
+              styles={{
+                body: {
+                  overflow: "visible",
+                },
+              }}
             >
               <Stack gap="sm">
-                <Group justify="space-between">
-                  <Badge variant="outline">
-                    {batchDrafts.length} editable sales ready
-                  </Badge>
-                  <Group>
+                <Group justify="space-between" wrap="wrap">
+                  <Group gap="xs" wrap="wrap">
+                    <Badge variant="filled" color="blue" size="md">
+                      {batchDrafts.length} Sales Row(s)
+                    </Badge>
+                    <Button
+                      type="button"
+                      leftSection={<Plus size={14} />}
+                      variant="light"
+                      color="blue"
+                      size="xs"
+                      onClick={() => addNewBatchDraftRow()}
+                    >
+                      Add Row
+                    </Button>
+                    <Button
+                      type="button"
+                      leftSection={<Copy size={14} />}
+                      variant="light"
+                      color="violet"
+                      size="xs"
+                      onClick={copyRow1ToAll}
+                      disabled={batchDrafts.length < 2}
+                      title="Apply Row 1 Client, Design, Site, Price, & Pumpcrete to all rows"
+                    >
+                      Copy Row 1 to All
+                    </Button>
+                    <Button
+                      type="button"
+                      leftSection={<Calendar size={14} />}
+                      variant="light"
+                      color="cyan"
+                      size="xs"
+                      onClick={syncAllDates}
+                      disabled={batchDrafts.length < 2}
+                      title="Set all rows to Row 1 date"
+                    >
+                      Sync Dates
+                    </Button>
+                  </Group>
+                  <Group gap="xs">
+                    <Button
+                      type="button"
+                      variant="light"
+                      color="gray"
+                      size="xs"
+                      onClick={closeBatchDrafts}
+                      disabled={loading}
+                    >
+                      Cancel
+                    </Button>
                     <Button
                       type="button"
                       leftSection={<Save size={16} />}
                       onClick={saveBatchSales}
                       loading={loading}
+                      color="blue"
                     >
-                      Save Multiple Sales
+                      Save All ({batchDrafts.length}) Sales
                     </Button>
                   </Group>
                 </Group>
-                <ScrollArea type="auto">
+
+                <Paper p="xs" radius="xs" style={{ backgroundColor: "rgba(37, 99, 235, 0.08)", border: "1px dashed rgba(37, 99, 235, 0.3)" }}>
+                  <Text size="xs" c="blue.3">
+                    ⌨️ <strong>Excel Navigation:</strong> Press <strong>Enter</strong> to move down (auto-adds next row at the end) | <strong>Tab</strong> to move right | <strong>Shift+Enter</strong> to move up | <strong>Ctrl+Delete</strong> / <strong>Alt+Delete</strong> to delete row | <strong>Ctrl+V</strong> to paste from Excel.
+                  </Text>
+                </Paper>
+
+                <ScrollArea type="auto" onPaste={handleTablePaste}>
                   <Table
                     className="batchSalesTable"
-                    miw={800}
+                    miw={1050}
                     verticalSpacing="xs"
                   >
                     <Table.Thead>
                       <Table.Tr>
-                        <Table.Th>DR No</Table.Th>
-                        <Table.Th>Date</Table.Th>
-                        <Table.Th>Client Name</Table.Th>
-                        <Table.Th>Design</Table.Th>
-                        <Table.Th>Site</Table.Th>
-                        <Table.Th>Cubic</Table.Th>
-                        <Table.Th>Price</Table.Th>
-                        <Table.Th>Pumpcrete</Table.Th>
-                        <Table.Th>Total</Table.Th>
-                        <Table.Th aria-label="Actions" />
+                        <Table.Th style={{ width: 40, textAlign: "center" }}>#</Table.Th>
+                        <Table.Th style={{ minWidth: 110 }}>DR No</Table.Th>
+                        <Table.Th style={{ minWidth: 130 }}>Date</Table.Th>
+                        <Table.Th style={{ minWidth: 220 }}>Client Name</Table.Th>
+                        <Table.Th style={{ minWidth: 170 }}>Design</Table.Th>
+                        <Table.Th style={{ minWidth: 170 }}>Site</Table.Th>
+                        <Table.Th style={{ minWidth: 95 }}>Cubic (m³)</Table.Th>
+                        <Table.Th style={{ minWidth: 100 }}>Price</Table.Th>
+                        <Table.Th style={{ minWidth: 105 }}>Pumpcrete</Table.Th>
+                        <Table.Th style={{ minWidth: 120 }}>Line Total</Table.Th>
+                        <Table.Th style={{ width: 50 }} aria-label="Actions" />
                       </Table.Tr>
                     </Table.Thead>
                     <Table.Tbody>
@@ -1836,8 +2166,12 @@ export function SalesPage() {
 
                         return (
                           <Table.Tr key={draft.id}>
+                            <Table.Td style={{ textAlign: "center", color: "#64748b", fontSize: 12, fontWeight: 600 }}>
+                              {index + 1}
+                            </Table.Td>
                             <Table.Td>
                               <NumberInput
+                                ref={setCellRef(index, "sale_or_number")}
                                 min={minimumDraftOrNumber}
                                 value={draft.sale_or_number}
                                 onChange={(value) =>
@@ -1846,20 +2180,24 @@ export function SalesPage() {
                                     Number(value) || "",
                                   )
                                 }
+                                onKeyDown={(e) => handleCellKeyDown(index, "sale_or_number", e)}
                               />
                             </Table.Td>
                             <Table.Td>
                               <DateShortcutInput
+                                inputRef={setCellRef(index, "sale_date")}
                                 value={draft.sale_date}
                                 onChange={(val) =>
                                   updateBatchDraft(draft.id, {
                                     sale_date: val,
                                   })
                                 }
+                                onKeyDown={(e) => handleCellKeyDown(index, "sale_date", e)}
                               />
                             </Table.Td>
                             <Table.Td>
                               <SuggestionTextInput
+                                inputRef={setCellRef(index, "client_name")}
                                 value={draft.client_name}
                                 suggestions={customers.map(
                                   (customer) => customer.label,
@@ -1869,10 +2207,12 @@ export function SalesPage() {
                                     client_name: value,
                                   })
                                 }
+                                onKeyDown={(e) => handleCellKeyDown(index, "client_name", e)}
                               />
                             </Table.Td>
                             <Table.Td>
                               <SuggestionTextInput
+                                inputRef={setCellRef(index, "design_label")}
                                 value={draft.design_label}
                                 suggestions={designs.map(
                                   (design) => design.label,
@@ -1882,6 +2222,10 @@ export function SalesPage() {
                                   updateBatchDraft(draft.id, {
                                     design_label: value,
                                     concrete_design_id: matched?.id ?? null,
+                                    pumpcreate:
+                                      matched && matched.pumpcreate != null
+                                        ? matched.pumpcreate
+                                        : draft.pumpcreate,
                                   });
                                 }}
                                 onCommit={(value) => {
@@ -1889,12 +2233,18 @@ export function SalesPage() {
                                   updateBatchDraft(draft.id, {
                                     design_label: value,
                                     concrete_design_id: matched?.id ?? null,
+                                    pumpcreate:
+                                      matched && matched.pumpcreate != null
+                                        ? matched.pumpcreate
+                                        : draft.pumpcreate,
                                   });
                                 }}
+                                onKeyDown={(e) => handleCellKeyDown(index, "design_label", e)}
                               />
                             </Table.Td>
                             <Table.Td>
                               <SuggestionTextInput
+                                inputRef={setCellRef(index, "project_site")}
                                 value={draft.project_site}
                                 suggestions={sites.map((site) => site.label)}
                                 onValueChange={(value) =>
@@ -1902,10 +2252,12 @@ export function SalesPage() {
                                     project_site: value,
                                   })
                                 }
+                                onKeyDown={(e) => handleCellKeyDown(index, "project_site", e)}
                               />
                             </Table.Td>
                             <Table.Td>
                               <NumberInput
+                                ref={setCellRef(index, "cubic_volume")}
                                 min={0}
                                 value={draft.cubic_volume}
                                 onChange={(value) =>
@@ -1913,10 +2265,12 @@ export function SalesPage() {
                                     cubic_volume: Number(value) || "",
                                   })
                                 }
+                                onKeyDown={(e) => handleCellKeyDown(index, "cubic_volume", e)}
                               />
                             </Table.Td>
                             <Table.Td>
                               <NumberInput
+                                ref={setCellRef(index, "unit_price")}
                                 min={0}
                                 value={draft.unit_price}
                                 onChange={(value) =>
@@ -1924,10 +2278,12 @@ export function SalesPage() {
                                     unit_price: Number(value) || "",
                                   })
                                 }
+                                onKeyDown={(e) => handleCellKeyDown(index, "unit_price", e)}
                               />
                             </Table.Td>
                             <Table.Td>
                               <NumberInput
+                                ref={setCellRef(index, "pumpcreate")}
                                 min={0}
                                 value={draft.pumpcreate}
                                 onChange={(value) =>
@@ -1935,11 +2291,13 @@ export function SalesPage() {
                                     pumpcreate: Number(value) || "",
                                   })
                                 }
+                                onKeyDown={(e) => handleCellKeyDown(index, "pumpcreate", e)}
                               />
                             </Table.Td>
-                            <Table.Td>
-                              {draftTotal.toLocaleString(undefined, {
+                            <Table.Td style={{ fontWeight: 600, color: "#93c5fd" }}>
+                              ₱{draftTotal.toLocaleString(undefined, {
                                 minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
                               })}
                             </Table.Td>
                             <Table.Td>
@@ -1948,7 +2306,9 @@ export function SalesPage() {
                                 aria-label="Remove row"
                                 color="red"
                                 variant="subtle"
-                                onClick={() => removeBatchDraft(draft.id)}
+                                onClick={() => removeBatchDraft(draft.id, "client_name")}
+                                disabled={loading}
+                                title="Delete row (or Ctrl+Delete / Alt+Delete)"
                               >
                                 <Trash2 size={16} />
                               </ActionIcon>
@@ -1959,6 +2319,34 @@ export function SalesPage() {
                     </Table.Tbody>
                   </Table>
                 </ScrollArea>
+
+                {/* Batch Summary Footer */}
+                <Paper p="sm" radius="xs" style={{ backgroundColor: "rgba(255, 255, 255, 0.03)", border: "1px solid rgba(255, 255, 255, 0.08)" }}>
+                  <SimpleGrid cols={{ base: 2, sm: 4 }} spacing="xs">
+                    <div>
+                      <Text size="xs" c="dimmed">Total DR Trips</Text>
+                      <Text size="sm" fw={700} c="blue.3">{batchDrafts.length} Rows</Text>
+                    </div>
+                    <div>
+                      <Text size="xs" c="dimmed">Total Volume</Text>
+                      <Text size="sm" fw={700} c="cyan.3">
+                        {batchDrafts.reduce((acc, d) => acc + Number(d.cubic_volume || 0), 0).toFixed(2)} m³
+                      </Text>
+                    </div>
+                    <div>
+                      <Text size="xs" c="dimmed">Total Pumpcrete</Text>
+                      <Text size="sm" fw={700} c="yellow.3">
+                        ₱{batchDrafts.reduce((acc, d) => acc + Number(d.pumpcreate || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </Text>
+                    </div>
+                    <div>
+                      <Text size="xs" c="dimmed">Grand Total Amount</Text>
+                      <Text size="sm" fw={800} c="green.4">
+                        ₱{batchDrafts.reduce((acc, d) => acc + (Number(d.cubic_volume || 0) * Number(d.unit_price || 0) + Number(d.pumpcreate || 0)), 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </Text>
+                    </div>
+                  </SimpleGrid>
+                </Paper>
               </Stack>
             </Modal>
           </Stack>
@@ -2252,6 +2640,7 @@ export function SalesPage() {
               allowDeselect={false}
               disabled={importing}
               checkIconPosition="right"
+              comboboxProps={{ withinPortal: true, zIndex: 10000 }}
               leftSection={<FileSpreadsheet size={16} />}
             />
           )}
@@ -2396,6 +2785,7 @@ export function SalesPage() {
                 label="Payment Method"
                 data={["Cash", "CK", "Online", "Deposit"]}
                 value={payForm.payment_method}
+                comboboxProps={{ withinPortal: true, zIndex: 10000 }}
                 onChange={(val) => setPayForm((p) => ({ ...p, payment_method: val || "Cash" }))}
               />
             </SimpleGrid>

@@ -1638,6 +1638,7 @@ export function PaymentsPage() {
                   checkIconPosition="right"
                   data={paymentMethods}
                   value={form.payment_method}
+                  comboboxProps={{ withinPortal: true, zIndex: 10000 }}
                   onChange={(val) =>
                     setForm((current) => ({
                       ...current,
@@ -1693,6 +1694,7 @@ export function PaymentsPage() {
                     checkIconPosition="right"
                     data={["Paid", "Collect"]}
                     value={form.remarks}
+                    comboboxProps={{ withinPortal: true, zIndex: 10000 }}
                     onChange={(val) =>
                       setForm((current) => ({ ...current, remarks: val ?? "Paid" }))
                     }

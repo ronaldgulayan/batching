@@ -73,9 +73,10 @@ type Props = Omit<TextInputProps, "value" | "onChange"> & {
   value: string;
   onChange: (value: string) => void;
   clearable?: boolean;
+  inputRef?: React.Ref<HTMLInputElement>;
 };
 
-export function DateShortcutInput({ value, onChange, clearable = true, ...props }: Props) {
+export function DateShortcutInput({ value, onChange, clearable = true, inputRef, ...props }: Props) {
   const [localVal, setLocalVal] = useState(value || "");
 
   // Synchronize internal input value with the value prop from parent
@@ -103,6 +104,7 @@ export function DateShortcutInput({ value, onChange, clearable = true, ...props 
     if (e.key === "Enter") {
       commitValue(localVal);
     }
+    props.onKeyDown?.(e);
   };
 
   const rightSection = (clearable && localVal) ? (
@@ -119,6 +121,7 @@ export function DateShortcutInput({ value, onChange, clearable = true, ...props 
   return (
     <TextInput
       {...props}
+      ref={inputRef}
       type="text"
       placeholder={props.placeholder || "e.g. 0721 or YYYY-MM-DD"}
       value={localVal}

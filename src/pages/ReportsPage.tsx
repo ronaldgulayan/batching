@@ -172,7 +172,7 @@ export function ReportsPage() {
   const [loading, setLoading] = useState(false);
   const [customers, setCustomers] = useState<Lookup[]>([]);
   const [salesRecords, setSalesRecords] = useState<SoaSaleItem[]>([]);
-  const [selectedCustomerId, setSelectedCustomerId] = useState<string>("all");
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [selectedSite, setSelectedSite] = useState<string>("all");
   const [selectedStatus, setSelectedStatus] = useState<string>("unpaid");
   const [fromDate, setFromDate] = useState<string>("");
@@ -221,16 +221,28 @@ export function ReportsPage() {
       setCustomers(custList);
 
       const salesList: SoaSaleItem[] = (salesRes.data ?? []).map((r: any) => {
+        const custNameFromJoin =
+          Array.isArray(r.customers) ? r.customers[0]?.name : r.customers?.name;
+        const custNameFromList = r.customer_id
+          ? custList.find((c) => c.id === r.customer_id)?.label
+          : "";
         const custName =
-          (Array.isArray(r.customers) ? r.customers[0]?.name : r.customers?.name) ??
-          r.manual_customer_name ??
-          "";
+          custNameFromJoin ||
+          custNameFromList ||
+          r.manual_customer_name ||
+          "Unknown Customer";
+
         const designCode =
           (Array.isArray(r.concrete_designs)
             ? r.concrete_designs[0]?.code
             : r.concrete_designs?.code) ?? "";
         const pumpVal = Number(r.pumpcreate ?? 0);
-        const baseTotal = Number(r.total_amount || 0);
+        const cubicVal = Number(r.cubic_volume || 0);
+        const priceVal = Number(r.unit_price || 0);
+        const baseTotal =
+          Number(r.total_amount || 0) > 0
+            ? Number(r.total_amount)
+            : cubicVal * priceVal;
         const fullTotal = baseTotal + pumpVal;
 
         const paymentsList = Array.isArray(r.sales_payments)
@@ -255,16 +267,23 @@ export function ReportsPage() {
           : "unpaid";
         const balanceAmount = isFullyPaid ? 0 : Math.max(0, fullTotal - paidAmount);
 
+        const resolvedCustomerId =
+          r.customer_id ||
+          custList.find(
+            (c) => c.label.toLowerCase().trim() === custName.toLowerCase().trim(),
+          )?.id ||
+          undefined;
+
         return {
           id: r.id,
           sale_or_number: Number(r.sale_or_number || 0),
           sale_date: r.sale_date,
-          customer_id: r.customer_id || undefined,
-          client_name: custName || "Unknown Customer",
+          customer_id: resolvedCustomerId,
+          client_name: custName,
           design: designCode || "STANDARD",
-          site: r.project_site ?? "",
-          cubic_volume: Number(r.cubic_volume || 0),
-          unit_price: Number(r.unit_price || 0),
+          site: (r.project_site ?? "").trim(),
+          cubic_volume: cubicVal,
+          unit_price: priceVal,
           pumpcreate: pumpVal,
           total_amount: fullTotal,
           paid_amount: paidAmount,
@@ -286,13 +305,7 @@ export function ReportsPage() {
     void loadData();
   }, []);
 
-  // Selected Customer Details
-  const selectedCustomer = useMemo(() => {
-    if (!selectedCustomerId || selectedCustomerId === "all") return null;
-    return customers.find((c) => c.id === selectedCustomerId) ?? null;
-  }, [customers, selectedCustomerId]);
-
-  // Combined Customer Options for Select dropdown
+  // Combined Customer Options for Select dropdown (No "All Clients")
   const customerOptions = useMemo(() => {
     const map = new Map<string, string>();
     customers.forEach((c) => {
@@ -310,34 +323,41 @@ export function ReportsPage() {
     }));
     opts.sort((a, b) => a.label.localeCompare(b.label));
 
-    return [{ value: "all", label: "All Clients / Customers" }, ...opts];
+    return opts;
   }, [customers, salesRecords]);
+
+  // Selected Customer Details
+  const selectedCustomer = useMemo(() => {
+    if (!selectedCustomerId) return null;
+    const fromCust = customers.find((c) => c.id === selectedCustomerId);
+    if (fromCust) return fromCust;
+    const fromOpts = customerOptions.find((c) => c.value === selectedCustomerId);
+    if (fromOpts) return { id: fromOpts.value, label: fromOpts.label };
+    return null;
+  }, [customers, customerOptions, selectedCustomerId]);
 
   // Available Sites for this Customer
   const availableSites = useMemo(() => {
-    let list = salesRecords;
-    if (selectedCustomer) {
-      list = salesRecords.filter(
-        (s) =>
-          s.customer_id === selectedCustomer.id ||
-          s.client_name.toLowerCase().trim() === selectedCustomer.label.toLowerCase().trim(),
-      );
-    }
+    if (!selectedCustomer) return [];
+    const list = salesRecords.filter(
+      (s) =>
+        (s.customer_id && s.customer_id === selectedCustomer.id) ||
+        (s.client_name && s.client_name.toLowerCase().trim() === selectedCustomer.label.toLowerCase().trim()),
+    );
     const setOfSites = new Set(list.map((s) => s.site).filter(Boolean));
     return Array.from(setOfSites).sort();
   }, [salesRecords, selectedCustomer]);
 
-  // Filtered Sales for the Statement
+  // Filtered Sales for the Statement (Requires selectedCustomer)
   const matchingSales = useMemo(() => {
+    if (!selectedCustomerId || !selectedCustomer) return [];
+
     return salesRecords.filter((sale) => {
-      // Customer Filter
-      if (selectedCustomerId && selectedCustomerId !== "all") {
-        const matchCustId = sale.customer_id === selectedCustomerId;
-        const matchCustName =
-          selectedCustomer &&
-          sale.client_name.toLowerCase().trim() === selectedCustomer.label.toLowerCase().trim();
-        if (!matchCustId && !matchCustName) return false;
-      }
+      // Must match chosen customer
+      const matchCustId = sale.customer_id === selectedCustomerId;
+      const matchCustName =
+        sale.client_name.toLowerCase().trim() === selectedCustomer.label.toLowerCase().trim();
+      if (!matchCustId && !matchCustName) return false;
 
       // Site Filter
       if (selectedSite && selectedSite !== "all") {
@@ -349,9 +369,9 @@ export function ReportsPage() {
       // Status Filter
       const status = (sale.payment_status || "unpaid").toLowerCase();
       if (selectedStatus === "unpaid") {
-        if (status === "paid" || sale.balance_amount <= 0) return false;
+        if (status === "paid") return false;
       } else if (selectedStatus === "paid") {
-        if (status !== "paid" && sale.balance_amount > 0) return false;
+        if (status !== "paid") return false;
       }
 
       // Date Range Filter (Normalized YYYY-MM-DD comparison)
@@ -440,11 +460,8 @@ export function ReportsPage() {
   // Display Client Name & Address for Header
   const displayClientName = useMemo(() => {
     if (selectedCustomer) return selectedCustomer.label;
-    const unique = Array.from(new Set(activeSoaItems.map((s) => s.client_name).filter(Boolean)));
-    if (unique.length === 1) return unique[0];
-    if (unique.length > 1) return unique.join(", ");
-    return "All Clients";
-  }, [selectedCustomer, activeSoaItems]);
+    return "____________________";
+  }, [selectedCustomer]);
 
   // Display Address
   const displayAddress = useMemo(() => {
@@ -456,6 +473,10 @@ export function ReportsPage() {
 
   // Handle Print Action
   const handlePrint = () => {
+    if (!selectedCustomerId) {
+      showError("Please select a client first to print the Statement of Account.");
+      return;
+    }
     if (activeSoaItems.length === 0) {
       showError("No delivery receipt records selected to print.");
       return;
@@ -527,7 +548,7 @@ export function ReportsPage() {
                 size="sm"
                 leftSection={<Printer size={16} />}
                 onClick={handlePrint}
-                disabled={activeSoaItems.length === 0}
+                disabled={!selectedCustomerId || activeSoaItems.length === 0}
               >
                 Print / Save to PDF
               </Button>
@@ -540,20 +561,23 @@ export function ReportsPage() {
           <SimpleGrid cols={{ base: 1, sm: 2, md: 5 }} spacing="sm">
             <Select
               label="Select Client / Bill To"
-              placeholder="Choose Customer..."
+              placeholder="Choose Client (Required)..."
               data={customerOptions}
               value={selectedCustomerId}
               onChange={(val) => {
-                setSelectedCustomerId(val || "all");
+                setSelectedCustomerId(val);
                 setSelectedSite("all");
               }}
               checkIconPosition="right"
               searchable
+              clearable={false}
+              required
+              comboboxProps={{ withinPortal: true, zIndex: 10000 }}
             />
 
             <Select
               label="Project Site"
-              placeholder="All Sites"
+              placeholder={availableSites.length > 0 ? "All Sites" : "No sites for this client"}
               data={[
                 { value: "all", label: "All Project Sites" },
                 ...availableSites.map((s) => ({ value: s, label: s })),
@@ -561,6 +585,8 @@ export function ReportsPage() {
               value={selectedSite}
               onChange={(val) => setSelectedSite(val || "all")}
               checkIconPosition="right"
+              searchable
+              comboboxProps={{ withinPortal: true, zIndex: 10000 }}
             />
 
             <Select
@@ -573,6 +599,7 @@ export function ReportsPage() {
               value={selectedStatus}
               onChange={(val) => setSelectedStatus(val || "unpaid")}
               checkIconPosition="right"
+              comboboxProps={{ withinPortal: true, zIndex: 10000 }}
             />
 
             <DateShortcutInput
@@ -695,9 +722,13 @@ export function ReportsPage() {
           </Text>
         </Group>
 
-        {matchingSales.length === 0 ? (
+        {!selectedCustomerId ? (
+          <Alert icon={<Building size={16} />} color="blue" variant="light">
+            Please select a client from the "Select Client / Bill To" dropdown above to view and include their delivery receipts.
+          </Alert>
+        ) : matchingSales.length === 0 ? (
           <Alert icon={<AlertCircle size={14} />} color="yellow" variant="light">
-            No delivery records found for this client matching the current filters.
+            No delivery records found for <strong>{selectedCustomer?.label}</strong> matching the current filters.
           </Alert>
         ) : (
           <div style={{ maxHeight: 140, overflowY: "auto" }}>
@@ -816,8 +847,10 @@ export function ReportsPage() {
             <tbody>
               {groupedSoaData.length === 0 ? (
                 <tr>
-                  <td colSpan={6} style={{ textAlign: "center", padding: "18px", color: "#666" }}>
-                    No delivery receipt items selected for this statement.
+                  <td colSpan={6} style={{ textAlign: "center", padding: "26px 18px", color: "#666" }}>
+                    {!selectedCustomerId
+                      ? "Please select a client above to generate and view the Statement of Account."
+                      : "No delivery receipt items found or selected for this statement."}
                   </td>
                 </tr>
               ) : (
